@@ -1,5 +1,5 @@
 // Service worker do Den: funciona offline e recebe notificações.
-const VERSION = 'den-v1.0.0';
+const VERSION = 'den-v1.1.0';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/parse.js', 'js/md.js', 'js/store.js', 'js/config.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

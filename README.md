@@ -8,6 +8,8 @@ App web instalável (PWA) que funciona offline e sincroniza pelo Supabase.
 - Visões de Lista, Quadro (kanban), Calendário e Prioridades (matriz de Eisenhower)
 - Data, hora, prazo e vários lembretes por tarefa
 - Pomodoro por tarefa, com meta de sessões e mini cronômetro
+- Notificações no iPhone e no computador no horário das tarefas e no fim do Pomodoro, mesmo com o app fechado
+- Calendário por mês ou por semana
 - Ramble: fale várias tarefas de uma vez e o Den separa datas, horários, prazos e urgência
 - Notas em Markdown com destaques, checklists e envio de itens para a Entrada
 - Adicionar rápido em português: "ligar pro banco amanhã às 10 p2 #pessoal prazo sexta"
@@ -25,3 +27,5 @@ App web instalável (PWA) que funciona offline e sincroniza pelo Supabase.
 - `js/config.js`: endereço do Supabase e chave pública
 - `sw.js`, `manifest.webmanifest`: funcionamento offline e instalação
 - `supabase/schema.sql`: tabelas e regras de segurança
+- `supabase/functions/send-reminders/`: função que envia as notificações (Web Push)
+- `supabase/cron.sql`: agenda a função a cada 30 segundos

@@ -39,6 +39,9 @@ const I = {
   skip: '<svg viewBox="0 0 24 24" class="fill"><path d="M6 5l9 7-9 7z"/><rect x="16" y="5" width="2.5" height="14" rx="1"/></svg>',
   down: '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>',
   hash: '<svg viewBox="0 0 24 24"><path d="M9 4L7 20M17 4l-2 16M4.5 9h16M3.5 15h16"/></svg>',
+  cloudoff: '<svg viewBox="0 0 24 24"><path d="M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 12.6a10 10 0 0 1 5.2-2.5M14 10.2a10 10 0 0 1 5 2.4M12 20h.01"/></svg>',
+  alert: '<svg viewBox="0 0 24 24"><path d="M12 3l9.5 17h-19z"/><path d="M12 10v4M12 17.5h.01"/></svg>',
+  move: '<svg viewBox="0 0 24 24"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>',
 };
 const ic = (n, cls = '') => `<span class="ic ${cls}">${I[n]}</span>`;
 const todayIcon = () => `<span class="ic"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="2.5"/><path d="M3.5 9h17"/><text x="12" y="17.8" text-anchor="middle" font-size="8.5" font-weight="800" fill="currentColor" stroke="none">${new Date().getDate()}</text></svg></span>`;
@@ -53,14 +56,31 @@ const standalone = () => matchMedia('(display-mode: standalone)').matches || nav
 const PCOLORS = ['#db4035', '#ff9933', '#fad000', '#7ecc49', '#299438', '#14aaf5', '#4073ff', '#884dff', '#e05194', '#808080'];
 const STATUSES = [['todo', 'A fazer', '#9a9ea5'], ['doing', 'Em andamento', '#246fe0'], ['waiting', 'Aguardando', '#eb8909'], ['done', 'Feito', '#058527']];
 
-const prefs = Object.assign({ focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, rambleLang: 'pt-BR' }, LS.get('den:prefs', {}));
+const prefs = Object.assign({ focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, rambleLang: 'pt-BR', textSize: 'normal' }, LS.get('den:prefs', {}));
 const savePrefs = () => LS.set('den:prefs', prefs);
+// Tamanho do texto no celular (o iPhone não aplica o ajuste do sistema em apps web).
+function applyTextSize() {
+  const v = { normal: '100%', grande: '115%', maior: '130%' }[prefs.textSize] || '100%';
+  document.documentElement.style.webkitTextSizeAdjust = v; document.documentElement.style.textSizeAdjust = v;
+}
+applyTextSize();
+// Teclado do celular: a janela acompanha a área visível e fica acima das teclas.
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const fit = () => {
+    const kb = Math.max(0, innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--kb', kb + 'px');
+    document.documentElement.style.setProperty('--vvh', vv.height + 'px');
+    document.body.classList.toggle('kb-open', kb > 80);
+  };
+  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit); fit();
+}
 
 /* ================= estado da interface ================= */
 const S = {
   view: LS.get('den:view', { type: 'today' }), modes: LS.get('den:modes', {}),
   noteId: null, noteMode: 'read', showDone: false, search: '', composerKey: null, reading: false,
-  calMonth: today().slice(0, 7), calSel: today(), started: false,
+  calMonth: today().slice(0, 7), calSel: today(), calMode: LS.get('den:calmode', 'month'), started: false, loading: false, boardCol: 0,
 };
 const saveView = () => { LS.set('den:view', S.view); LS.set('den:modes', S.modes); };
 const all = store.all, get = store.get;
@@ -105,19 +125,27 @@ function urlB64ToUint8Array(base64) {
   const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
+async function subscribePush() {
+  if (!cfg.vapidPublicKey || store.state.uid === 'local' || !('serviceWorker' in navigator)) return false;
+  const reg = await navigator.serviceWorker.ready;
+  if (!reg.pushManager) return false;
+  const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(cfg.vapidPublicKey) });
+  await store.savePushSubscription(sub);
+  LS.set('den:push-ok', true);
+  return true;
+}
+// Ao abrir o app com notificações já permitidas, confirma o registro deste aparelho no servidor.
+async function ensurePush() { try { if (notifState() === 'granted') await subscribePush(); } catch (e) { console.warn('push', e); } }
 async function enableNotifications() {
   if (!('Notification' in window)) {
     toast(standalone() ? 'Este aparelho não oferece notificações para apps web.' : 'No iPhone, instale o Den na Tela de Início para ativar notificações.');
     return false;
   }
   const perm = await Notification.requestPermission();
-  if (perm !== 'granted') { toast('Notificações bloqueadas. Ative em Ajustes › Notificações › Den.'); render(); return false; }
-  if (cfg.vapidPublicKey && store.state.uid !== 'local') {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.getSubscription() || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(cfg.vapidPublicKey) });
-      await store.savePushSubscription(sub);
-    } catch (e) { console.warn(e); toast('Notificações ativadas neste aparelho, mas não foi possível registrar no servidor.'); render(); return true; }
+  if (perm !== 'granted') { toast('Notificações bloqueadas. Libere nas configurações do navegador ou, no iPhone, em Ajustes › Notificações › Den.', null, 6000); render(); return false; }
+  if (store.state.uid !== 'local') {
+    try { await subscribePush(); }
+    catch (e) { console.warn(e); toast('Notificações ativadas neste aparelho, mas não foi possível registrar no servidor.'); render(); return true; }
   }
   toast('Notificações ativadas'); render();
   return true;
@@ -212,11 +240,25 @@ function taskRow(t, opts = {}) {
     </div></div>`;
 }
 function headHtml(title, sub = '', actions = '') {
-  return `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}<span class="grow"></span>${actions}</header>`;
+  return `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}<span class="netslot">${netChip()}</span><span class="grow"></span>${actions}</header><div class="netbar-slot">${netBar()}</div>`;
+}
+function netChip() {
+  const m = { offline: ['off', 'Offline'], error: ['err', 'Sem sincronizar'], saving: ['busy', 'Salvando'] }[store.state.status];
+  return m ? `<span class="net-chip ${m[0]}" role="status"><i></i>${m[1]}</span>` : '';
+}
+function netBar() {
+  const st = store.state.status, n = store.pendingCount();
+  if (st === 'offline') return `<div class="netbar off" role="status">${ic('cloudoff', 'sm')}<span>Sem internet. ${n ? `${n} alteraç${n === 1 ? 'ão vai' : 'ões vão'} sincronizar quando a conexão voltar.` : 'Você pode continuar usando o Den normalmente.'}</span></div>`;
+  if (st === 'error') return `<div class="netbar err" role="status">${ic('alert', 'sm')}<span>Não foi possível sincronizar. Tentando de novo…</span><button class="link-btn" data-a="sync-now">Tentar agora</button></div>`;
+  return '';
+}
+function renderNet() {
+  document.querySelectorAll('.netslot').forEach(e => { e.innerHTML = netChip(); });
+  document.querySelectorAll('.netbar-slot').forEach(e => { e.innerHTML = netBar(); });
 }
 function viewSwitch(active) {
-  const opts = [['list', 'Lista', 'list'], ['board', 'Quadro', 'board'], ['calendar', 'Calendário', 'cal'], ['matrix', 'Prioridades', 'grid']];
-  return `<div class="seg" role="tablist" aria-label="Visão">${opts.map(([k, l, i]) => `<button role="tab" class="${k === active ? 'on' : ''}" data-a="mode" data-mode="${k}" title="${l}">${ic(i, 'sm')}<span>${l}</span></button>`).join('')}</div>`;
+  const opts = [['list', 'Lista', 'Lista', 'list'], ['board', 'Quadro', 'Quadro', 'board'], ['calendar', 'Calendário', 'Agenda', 'cal'], ['matrix', 'Prioridades', 'Matriz', 'grid']];
+  return `<div class="seg" role="tablist" aria-label="Visão">${opts.map(([k, l, sh, i]) => `<button role="tab" aria-selected="${k === active}" class="${k === active ? 'on' : ''}" data-a="mode" data-mode="${k}" title="${l}">${ic(i, 'sm')}<span class="lg">${l}</span><span class="sh">${sh}</span></button>`).join('')}</div>`;
 }
 const rambleBtn = () => `<button class="btn dark ramble-btn" data-a="ramble" title="Adicionar por voz">${ic('mic', 'sm')}<span>Ramble</span></button>`;
 
@@ -274,7 +316,8 @@ function renderTasks(main) {
     body += `<button class="link-btn done-toggle" data-a="show-done">${S.showDone ? 'Ocultar' : 'Mostrar'} concluídas (${doneList.length})</button>`;
     if (S.showDone) body += doneList.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 50).map(t => taskRow(t)).join('');
   }
-  paint(main, headHtml(L.title, L.sub, actions) + `<div class="scroll" data-scroll="tasks"><div class="task-col">${body}</div></div>`);
+  const hint = touchOnly && L.tasks.length && !LS.get('den:hint-gestures') ? `<div class="coach" role="note"><b>Dicas rápidas</b><ul><li>Deslize uma tarefa para a <b>direita</b> para concluir, ou para a <b>esquerda</b> para reagendar.</li><li><b>Segure</b> uma tarefa ou cartão para mover.</li><li><b>Segure o botão +</b> para falar várias tarefas de uma vez.</li></ul><button class="btn" data-a="hint-ok">Entendi</button></div>` : '';
+  paint(main, headHtml(L.title, L.sub, actions) + `<div class="scroll" data-scroll="tasks"><div class="task-col">${hint}${body}</div></div>`);
 }
 
 function paint(main, html) {
@@ -300,44 +343,77 @@ function renderBoard(main, L, actions) {
         <div class="t-meta">${taskMeta(t, { hideProject: !!L.project })}</div></article>`).join('')}
       ${k !== 'done' ? addRow('board-' + k, { ...L.preset, status: k }) : ''}</div></section>`;
   }).join('');
-  paint(main, headHtml(L.title, L.sub, actions) + `<div class="scroll board" data-scroll="board">${cols}</div>`);
+  const counts = STATUSES.map(([k]) => k === 'done' ? recentDone.length : L.tasks.filter(t => (t.status || 'todo') === k).length);
+  const tabs = `<div class="col-tabs" role="tablist" aria-label="Colunas">${STATUSES.map(([k, label], i) => `<button role="tab" data-a="col-jump" data-i="${i}" class="${i === (S.boardCol || 0) ? 'on' : ''}">${label}<em>${counts[i]}</em></button>`).join('')}</div>`;
+  paint(main, headHtml(L.title, L.sub, actions) + tabs + `<div class="scroll board" data-scroll="board">${cols}</div>`);
+  const board = $('.board', main);
+  board.addEventListener('scroll', () => {
+    const w = board.firstElementChild?.getBoundingClientRect().width || 1;
+    const i = Math.round(board.scrollLeft / (w + 10));
+    if (i !== S.boardCol) { S.boardCol = i; main.querySelectorAll('.col-tabs button').forEach((b, k) => { b.classList.toggle('on', k === i); b.setAttribute('aria-selected', k === i); }); }
+  }, { passive: true });
 }
 
 /* ---------- calendário ---------- */
-function renderCalendar(main) {
-  const [y, m] = S.calMonth.split('-').map(Number);
-  const first = new Date(y, m - 1, 1); const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
-  const weeks = Math.ceil((((first.getDay() + 6) % 7) + new Date(y, m, 0).getDate()) / 7);
-  const td = today(); const tasks = openTasks();
+function calItems() {
   const byDay = {};
-  for (const t of tasks) {
+  for (const t of openTasks()) {
     if (t.due) (byDay[t.due] ||= []).push({ t, kind: 'due' });
     if (t.deadline && t.deadline !== t.due) (byDay[t.deadline] ||= []).push({ t, kind: 'deadline' });
   }
   Object.values(byDay).forEach(l => l.sort((a, b) => (a.kind === 'deadline' ? -1 : 0) - (b.kind === 'deadline' ? -1 : 0) || (a.t.time || '99').localeCompare(b.t.time || '99') || PRIO_ORDER(a.t, b.t)));
-  const mob = isMobile();
-  let cells = '';
-  for (let i = 0; i < weeks * 7; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i); const ds = ymd(d);
-    const inMonth = d.getMonth() === m - 1; const items = byDay[ds] || [];
-    const cls = `cell${inMonth ? '' : ' out'}${ds === td ? ' today' : ''}${ds === S.calSel ? ' sel' : ''}`;
+  return byDay;
+}
+const weekStart = ds => { const d = pd(ds); return addDays(ds, -((d.getDay() + 6) % 7)); };
+const chipHtml = x => `<button class="chip-t ${x.kind === 'deadline' ? 'dl' : 'p' + (x.t.priority || 4)}" data-a="open" data-id="${esc(x.t.id)}" draggable="${x.kind === 'due'}" data-drag-id="${esc(x.t.id)}">${x.kind === 'deadline' ? ic('flag', 'sm') + 'Prazo: ' : x.t.time ? `<b>${x.t.time}</b> ` : ''}${esc(plainTitle(x.t.title))}</button>`;
+const dotsHtml = items => `<span class="dots">${items.slice(0, 3).map(x => `<i class="${x.kind === 'deadline' ? 'dl' : 'p' + (x.t.priority || 4)}"></i>`).join('')}</span>`;
+function renderCalendar(main) {
+  const mode = S.calMode || 'month';
+  const td = today(); const byDay = calItems(); const mob = isMobile();
+  const wd = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
+  const agendaHtml = () => {
+    const list = byDay[S.calSel] || [];
+    return `<div class="agenda"><div class="section-h">${esc(longDate(S.calSel))} <span class="meta">${dueInfo(S.calSel).label}</span></div>${list.map(x => taskRow(x.t, { hideDue: x.kind === 'due' && !x.t.time })).join('')}${list.length ? '' : '<p class="muted small" style="margin:10px 0 0">Nada marcado para este dia.</p>'}${addRow('cal' + S.calSel, { due: S.calSel })}</div>`;
+  };
+  let title, body;
+  if (mode === 'week') {
+    const ws = weekStart(S.calSel); const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+    const a = pd(days[0]), b = pd(days[6]);
+    title = a.getMonth() === b.getMonth() ? `${a.getDate()}–${b.getDate()} ${MO[b.getMonth()]}` : `${a.getDate()} ${MO[a.getMonth()]} – ${b.getDate()} ${MO[b.getMonth()]}`;
     if (mob) {
-      cells += `<button class="${cls}" data-a="cal-sel" data-date="${ds}"><span class="num">${d.getDate()}</span><span class="dots">${items.slice(0, 3).map(x => `<i class="${x.kind === 'deadline' ? 'dl' : 'p' + (x.t.priority || 4)}"></i>`).join('')}</span></button>`;
+      body = `<div class="week-strip" role="tablist" aria-label="Dias da semana">${days.map((ds, i) => { const items = byDay[ds] || []; return `<button role="tab" aria-selected="${ds === S.calSel}" class="wday${ds === S.calSel ? ' sel' : ''}${ds === td ? ' today' : ''}" data-a="cal-sel" data-date="${ds}"><span class="wd-l">${wd[i]}</span><span class="num">${pd(ds).getDate()}</span>${dotsHtml(items)}</button>`; }).join('')}</div>${agendaHtml()}`;
     } else {
-      cells += `<div class="${cls}" data-drop="day" data-date="${ds}"><div class="cell-h"><span class="num">${d.getDate()}</span><button class="cell-add" data-a="cal-add" data-date="${ds}" aria-label="Adicionar tarefa em ${shortDate(ds)}">${I.plus}</button></div>
-        ${items.slice(0, 4).map(x => `<button class="chip-t ${x.kind === 'deadline' ? 'dl' : 'p' + (x.t.priority || 4)}" data-a="open" data-id="${esc(x.t.id)}" draggable="${x.kind === 'due'}" data-drag-id="${esc(x.t.id)}">${x.kind === 'deadline' ? ic('flag', 'sm') + 'Prazo: ' : x.t.time ? `<b>${x.t.time}</b> ` : ''}${esc(plainTitle(x.t.title))}</button>`).join('')}
+      body = `<div class="week">${days.map((ds, i) => { const items = byDay[ds] || []; return `<section class="wcol${ds === td ? ' today' : ''}${ds === S.calSel ? ' sel' : ''}" data-drop="day" data-date="${ds}">
+        <button class="wcol-h" data-a="cal-sel" data-date="${ds}"><span class="wd-l">${wd[i]}</span><span class="num">${pd(ds).getDate()}</span></button>
+        <div class="wcol-list">${items.map(chipHtml).join('')}</div>
+        <button class="add-row sm" data-a="cal-add" data-date="${ds}"><span class="plus">${ic('plus', 'sm')}</span>Adicionar</button></section>`; }).join('')}</div>`;
+    }
+  } else {
+    const [y, m] = S.calMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1); const start = new Date(first); start.setDate(1 - ((first.getDay() + 6) % 7));
+    const weeks = Math.ceil((((first.getDay() + 6) % 7) + new Date(y, m, 0).getDate()) / 7);
+    title = `${mob ? MO_LONG[m - 1].slice(0, 3) : MO_LONG[m - 1]} ${y}`;
+    let cells = '';
+    for (let i = 0; i < weeks * 7; i++) {
+      const d = new Date(start); d.setDate(start.getDate() + i); const ds = ymd(d);
+      const inMonth = d.getMonth() === m - 1; const items = byDay[ds] || [];
+      const cls = `cell${inMonth ? '' : ' out'}${ds === td ? ' today' : ''}${ds === S.calSel ? ' sel' : ''}`;
+      if (mob) cells += `<button class="${cls}" data-a="cal-sel" data-date="${ds}" aria-label="${longDate(ds)}${items.length ? ', ' + items.length + ' item' + (items.length === 1 ? '' : 's') : ''}"><span class="num">${d.getDate()}</span>${dotsHtml(items)}</button>`;
+      else cells += `<div class="${cls}" data-drop="day" data-date="${ds}"><div class="cell-h"><span class="num">${d.getDate()}</span><button class="cell-add" data-a="cal-add" data-date="${ds}" aria-label="Adicionar tarefa em ${shortDate(ds)}">${I.plus}</button></div>
+        ${items.slice(0, 4).map(chipHtml).join('')}
         ${items.length > 4 ? `<button class="more" data-a="cal-sel" data-date="${ds}">+${items.length - 4} mais</button>` : ''}</div>`;
     }
+    body = `<div class="cal${mob ? ' compact' : ''}"><div class="wd">${wd.map(w => `<span>${w}</span>`).join('')}</div><div class="grid" style="grid-template-rows:repeat(${weeks},minmax(0,1fr))">${cells}</div></div>${mob || (byDay[S.calSel] || []).length > 4 ? agendaHtml() : ''}`;
   }
-  const head = `<div class="cal-nav"><button class="icon-btn bordered" data-a="cal-prev" aria-label="Mês anterior">${I.left}</button><button class="icon-btn bordered" data-a="cal-next" aria-label="Próximo mês">${I.right}</button><button class="btn ghost" data-a="cal-today">Hoje</button></div>`;
-  let agenda = '';
-  if (mob || S.calSel) {
-    const list = (byDay[S.calSel] || []);
-    agenda = `<div class="agenda"><div class="section-h">${esc(longDate(S.calSel))} <span class="meta">${dueInfo(S.calSel).label}</span></div>${list.map(x => taskRow(x.t, { hideDue: x.kind === 'due' && !x.t.time })).join('')}${addRow('cal' + S.calSel, { due: S.calSel })}</div>`;
-  }
-  const wd = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
-  paint(main, headHtml(`${mob ? MO_LONG[m - 1].slice(0, 3) : MO_LONG[m - 1]} ${y}`, '', head + viewSwitch('calendar') + rambleBtn()) +
-    `<div class="scroll cal-scroll" data-scroll="cal"><div class="cal${mob ? ' compact' : ''}"><div class="wd">${wd.map(w => `<span>${w}</span>`).join('')}</div><div class="grid" style="grid-template-rows:repeat(${weeks},minmax(0,1fr))">${cells}</div></div>${mob ? agenda : (S.calSel && (byDay[S.calSel] || []).length > 4 ? agenda : '')}</div>`);
+  const unit = mode === 'week' ? 'Semana' : 'Mês';
+  const head = `<div class="cal-nav"><button class="icon-btn bordered" data-a="cal-prev" aria-label="${unit} anterior">${I.left}</button><button class="icon-btn bordered" data-a="cal-next" aria-label="Próxim${mode === 'week' ? 'a semana' : 'o mês'}">${I.right}</button><button class="btn ghost" data-a="cal-today">Hoje</button>
+    <div class="seg mini" role="tablist" aria-label="Período"><button role="tab" aria-selected="${mode === 'month'}" class="${mode === 'month' ? 'on' : ''}" data-a="cal-mode" data-m="month">Mês</button><button role="tab" aria-selected="${mode === 'week'}" class="${mode === 'week' ? 'on' : ''}" data-a="cal-mode" data-m="week">Semana</button></div></div>`;
+  paint(main, headHtml(title, '', head + viewSwitch('calendar') + rambleBtn()) + `<div class="scroll cal-scroll" data-scroll="cal-${mode}">${body}</div>`);
+}
+function calShift(dir) {
+  if ((S.calMode || 'month') === 'week') { S.calSel = addDays(S.calSel, 7 * dir); S.calMonth = S.calSel.slice(0, 7); }
+  else { const [y, m] = S.calMonth.split('-').map(Number); const d = new Date(y, m - 1 + dir, 1); S.calMonth = ymd(d).slice(0, 7); S.calSel = S.calSel.slice(0, 7) === S.calMonth ? S.calSel : ymd(d); }
+  render();
 }
 
 /* ---------- matriz de Eisenhower ---------- */
@@ -406,7 +482,7 @@ function renderNotes(main) {
   const prev = $('.list-scroll', pane)?.scrollTop || 0;
   const searchBox = isSearch ? `<label class="search-inline">${ic('search', 'sm')}<input id="search-inline" type="search" placeholder="Buscar tarefas e notas" value="${esc(S.search)}" autocomplete="off" enterkeyhint="search"></label>` : '';
   const hadFocus = document.activeElement?.id === 'search-inline';
-  pane.innerHTML = `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1>${esc(title)}</h1><span class="sub">${esc(sub)}</span><span class="grow"></span><button class="icon-btn" data-a="new-note" aria-label="Nova nota">${I.pen}</button></header>${searchBox}<div class="list-scroll">${h}</div>`;
+  pane.innerHTML = `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1>${esc(title)}</h1><span class="sub">${esc(sub)}</span><span class="netslot">${netChip()}</span><span class="grow"></span><button class="icon-btn" data-a="new-note" aria-label="Nova nota">${I.pen}</button></header><div class="netbar-slot">${netBar()}</div>${searchBox}<div class="list-scroll">${h}</div>`;
   $('.list-scroll', pane).scrollTop = prev;
   const si = $('#search-inline', pane);
   if (si) { si.addEventListener('input', e => { S.search = e.target.value.trim(); $('#search').value = e.target.value; renderNotes(main); }); if (hadFocus) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); } }
@@ -502,7 +578,9 @@ function newNote() {
   const now = Date.now(); const tag = S.view.type === 'tag' ? `\n\n#${S.view.tag}` : '';
   const n = { id: uid('n'), kind: 'note', body: '# ' + tag, pinned: false, createdAt: now };
   if (layoutOf() !== 'notes' || S.view.type === 'search') { S.view = { type: 'notes' }; saveView(); }
-  S.noteId = n.id; S.noteMode = 'edit'; S.reading = true; delConfirm = false;
+  S.noteId = n.id; S.noteMode = 'edit'; delConfirm = false;
+  if (isMobile() && !layers.includes('note')) pushLayer('note');
+  S.reading = true;
   put(n);
   const ta = $('#ed-ta'); if (ta) { ta.focus(); ta.setSelectionRange(2, 2); }
   closeSide();
@@ -516,21 +594,24 @@ function openNote(id) {
   if (S.noteId !== id) cleanupEmptyNote();
   if (layoutOf() !== 'notes') { S.view = { type: 'notes' }; saveView(); }
   if (S.noteId !== id) { S.noteId = id; S.noteMode = 'read'; delConfirm = false; }
-  S.reading = true; closeOverlay(); render();
+  closeOverlay().then(() => { const was = S.reading; S.reading = true; render(); if (isMobile() && !was && !layers.includes('note')) pushLayer('note'); });
 }
 
 /* ================= ajustes ================= */
 function renderSettings(main) {
   const st = store.state; const ns = notifState();
-  const notifTxt = { granted: 'Ativadas neste aparelho', denied: 'Bloqueadas. Ative em Ajustes do iPhone › Notificações › Den.', default: 'Ainda não ativadas', unsupported: standalone() ? 'Este navegador não oferece notificações.' : 'No iPhone, instale o Den na Tela de Início para ativar.' }[ns];
-  const pushNote = cfg.vapidPublicKey ? '' : '<p class="muted small">Os lembretes com o app fechado serão ligados na próxima etapa da configuração. Por enquanto, eles aparecem enquanto o Den está aberto.</p>';
+  const notifTxt = { granted: 'Ativadas neste aparelho', denied: 'Bloqueadas. Libere nas configurações do navegador. No iPhone: Ajustes › Notificações › Den.', default: 'Ainda não ativadas', unsupported: standalone() ? 'Este navegador não oferece notificações.' : 'No iPhone, instale o Den na Tela de Início para ativar.' }[ns];
+  const pushNote = st.uid === 'local'
+    ? '<p class="muted small">Sem conta, os avisos só aparecem com o Den aberto. Entre na sua conta para receber com o app fechado.</p>'
+    : '<p class="muted small">Você recebe um aviso no horário de cada tarefa e quando o Pomodoro termina, mesmo com o Den fechado. Funciona no iPhone (com o Den instalado na Tela de Início) e no navegador do computador. Ative em cada aparelho.</p>';
   const field = (id, label, val, min, max) => `<label class="num-field"><span>${label}</span><input type="number" inputmode="numeric" id="${id}" min="${min}" max="${max}" value="${val}"></label>`;
   paint(main, headHtml('Ajustes') + `<div class="scroll" data-scroll="settings"><div class="settings">
     <section><h2>Conta</h2>${st.uid === 'local'
       ? `<p>Você está usando o Den sem conta. Os dados ficam só neste aparelho.</p><button class="btn primary" data-a="go-auth">Entrar ou criar conta</button>`
       : `<p><b>${esc(st.email || '')}</b></p><p class="muted small">Status: ${esc({ synced: 'sincronizado', saving: 'salvando…', offline: 'sem internet, as mudanças vão sincronizar depois', error: 'erro ao sincronizar, tentando de novo' }[st.status] || st.status)}</p>
          <div class="row"><button class="btn ghost" data-a="sync-now">Sincronizar agora</button><button class="btn danger" data-a="sign-out">Sair</button></div>`}</section>
-    <section><h2>Notificações</h2><p>${notifTxt}</p>${ns === 'default' ? '<button class="btn primary" data-a="enable-notif">Ativar notificações</button>' : ''}${ns === 'granted' ? '<button class="btn ghost" data-a="test-notif">Enviar notificação de teste</button>' : ''}${pushNote}</section>
+    <section><h2>Notificações</h2><p>${notifTxt}</p>${ns === 'default' ? '<button class="btn primary" data-a="enable-notif">Ativar notificações</button>' : ''}${ns === 'granted' ? `<div class="row"><button class="btn ghost" data-a="test-notif">Testar neste aparelho</button>${st.uid !== 'local' ? '<button class="btn ghost" data-a="test-push">Testar com o app fechado</button>' : ''}</div>` : ''}${pushNote}</section>
+    <section><h2>Tamanho do texto</h2><p class="muted small">Vale para o celular. No computador, use o zoom do navegador.</p><div class="seg" role="radiogroup" aria-label="Tamanho do texto">${[['normal', 'Normal'], ['grande', 'Grande'], ['maior', 'Maior']].map(([k, l]) => `<button role="radio" aria-checked="${prefs.textSize === k}" class="${prefs.textSize === k ? 'on' : ''}" data-a="text-size" data-v="${k}">${l}</button>`).join('')}</div></section>
     <section><h2>Pomodoro</h2><div class="nums">${field('pf-focus', 'Foco (min)', prefs.focusMin, 5, 120)}${field('pf-short', 'Pausa curta', prefs.shortMin, 1, 30)}${field('pf-long', 'Pausa longa', prefs.longMin, 5, 60)}${field('pf-every', 'Pausa longa a cada', prefs.longEvery, 2, 8)}</div></section>
     <section><h2>Ramble</h2><label class="num-field wide"><span>Idioma da fala</span><select id="pf-lang"><option value="pt-BR"${prefs.rambleLang === 'pt-BR' ? ' selected' : ''}>Português (Brasil)</option><option value="en-US"${prefs.rambleLang === 'en-US' ? ' selected' : ''}>English</option></select></label></section>
     ${standalone() ? '' : `<section><h2>Instalar no iPhone</h2><ol class="steps"><li>Abra este endereço no <b>Safari</b>.</li><li>Toque em <b>Compartilhar</b> (o quadrado com a seta).</li><li>Escolha <b>Adicionar à Tela de Início</b>.</li><li>Abra o Den pelo ícone e ative as notificações aqui.</li></ol></section>`}
@@ -550,8 +631,14 @@ function layoutOf() {
   if (t === 'calendar' || t === 'matrix' || t === 'settings') return t;
   return 'tasks';
 }
+const VIEW_TITLE = { today: 'Hoje', inbox: 'Entrada', upcoming: 'Em breve', project: 'Projeto', calendar: 'Calendário', matrix: 'Prioridades', notes: 'Notas', tag: 'Etiqueta', search: 'Buscar', settings: 'Ajustes' };
+function skeletonHtml() {
+  const row = w => `<div class="sk-row"><span class="sk-ck"></span><span class="sk-lines"><span class="sk" style="width:${w}%"></span><span class="sk sm" style="width:${w - 25}%"></span></span></div>`;
+  return `<div class="scroll" data-scroll="sk"><div class="task-col sk-wrap" aria-busy="true">${row(72)}${row(56)}${row(64)}${row(48)}<p class="sk-msg" role="status">Sincronizando suas tarefas…</p></div></div>`;
+}
 function renderMain() {
   const main = $('#main'); const lay = layoutOf();
+  if (S.loading && !store.state.items.size && lay !== 'settings') { lastLayout = null; main.innerHTML = headHtml(VIEW_TITLE[S.view.type] || 'Den') + skeletonHtml(); return; }
   if (lay !== lastLayout) { main.innerHTML = ''; lastLayout = lay; editorKey = null; }
   main.dataset.layout = lay;
   if (lay === 'tasks') renderTasks(main);
@@ -564,8 +651,13 @@ function render() {
   if (!S.started) return;
   renderSide(); renderSync(); renderTabbar(); renderMain(); renderFocusPill();
 }
-function closeSide() { $('#app').classList.remove('side-open'); }
-function go(view) {
+function closeSide() { if (layers.includes('side')) popLayer('side'); else $('#app').classList.remove('side-open'); }
+function openSide() { if (!$('#app').classList.contains('side-open')) { $('#app').classList.add('side-open'); pushLayer('side'); } }
+async function go(view) {
+  await closeAllLayers();
+  applyView(view, true);
+}
+function applyView(view, push) {
   cleanupEmptyNote();
   S.view = view; S.composerKey = null; composerEl = null; S.reading = false;
   if (view.type !== 'search') { S.search = ''; $('#search').value = ''; }
@@ -573,9 +665,44 @@ function go(view) {
     const pool = view.type === 'tag' ? all('note').filter(n => hasTag(n, view.tag)) : all('note');
     if (!S.noteId || !pool.some(n => n.id === S.noteId)) { const s = notesSorted(pool)[0]; S.noteId = s && !isMobile() ? s.id : null; S.noteMode = 'read'; }
   }
-  saveView(); closeSide(); render();
+  saveView(); $('#app').classList.remove('side-open'); render();
+  if (push) afterPops(() => history.pushState({ den: 1, view }, '', '#' + hashFor(view)));
   $('#main .scroll')?.scrollTo?.(0, 0);
   if (view.type === 'search' && isMobile()) $('#search-inline')?.focus();
+}
+
+/* ================= histórico: o voltar do iPhone, Android e navegador fecha a camada de cima ================= */
+const layers = []; const popWaiters = []; let pendingPops = 0; let popChain = Promise.resolve();
+const afterPops = fn => { popChain = popChain.then(fn); return popChain; };
+function pushLayer(kind) { layers.push(kind); afterPops(() => history.pushState({ den: 1, layer: kind, view: S.view }, '')); }
+function closeLayerUI(kind) {
+  if (kind === 'overlay') closeOverlayNow();
+  else if (kind === 'focus') { focusOpen = false; renderFocus(); renderFocusPill(); }
+  else if (kind === 'note') { cleanupEmptyNote(); S.reading = false; render(); }
+  else if (kind === 'side') $('#app').classList.remove('side-open');
+}
+function popLayer(kind) {
+  const i = kind ? layers.lastIndexOf(kind) : layers.length - 1;
+  if (i < 0) { closeLayerUI(kind); return popChain; }
+  const k = layers[i]; layers.splice(i, 1); closeLayerUI(k);
+  if (i !== layers.length) return popChain;
+  pendingPops++;
+  return afterPops(() => new Promise(res => { popWaiters.push(res); history.back(); setTimeout(res, 600); }));
+}
+async function closeAllLayers() { while (layers.length) await popLayer(); await popChain; }
+addEventListener('popstate', e => {
+  if (pendingPops) { pendingPops--; const w = popWaiters.shift(); if (w) w(); return; }
+  const kind = layers.pop();
+  if (kind) closeLayerUI(kind);
+  else if (e.state && e.state.den && e.state.view) applyView(e.state.view, false);
+});
+const VIEW_HASH = { today: 'hoje', inbox: 'entrada', upcoming: 'em-breve', calendar: 'calendario', matrix: 'prioridades', notes: 'notas', search: 'buscar', settings: 'ajustes' };
+function hashFor(v) { if (v.type === 'project') return 'projeto-' + v.id; if (v.type === 'tag') return 'etiqueta-' + encodeURIComponent(v.tag); return VIEW_HASH[v.type] || 'hoje'; }
+function viewFromHash(h) {
+  h = decodeURIComponent((h || '').replace(/^#/, '')); if (!h) return null;
+  if (h.startsWith('projeto-')) return { type: 'project', id: h.slice(8) };
+  if (h.startsWith('etiqueta-')) return { type: 'tag', tag: h.slice(9) };
+  const t = Object.keys(VIEW_HASH).find(k => VIEW_HASH[k] === h); return t ? { type: t } : null;
 }
 
 /* ================= toast ================= */
@@ -623,7 +750,7 @@ function buildComposer(cfgC) {
   de.addEventListener('input', () => { de.style.height = 'auto'; de.style.height = de.scrollHeight + 'px'; });
   el.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cfgC.onClose(); } });
   $('[data-c=cancel]', el).addEventListener('click', () => cfgC.onClose());
-  $('[data-c=mic]', el).addEventListener('click', () => { cfgC.onClose(); openRamble(); });
+  $('[data-c=mic]', el).addEventListener('click', () => { Promise.resolve(cfgC.onClose()).then(() => openRamble()); });
   el.addEventListener('submit', e => {
     e.preventDefault();
     const q = parseQuick(ti.value); if (!q.title) return;
@@ -658,15 +785,23 @@ function openQuickAdd(preset = defaultPreset()) {
 }
 
 /* ================= sobreposições (modal no computador, folha no celular) ================= */
+let lastFocus = null;
 function openSheet(inner, label, cls = '') {
-  $('#overlay').innerHTML = `<div class="scrim" data-a="close-overlay"><div class="dialog ${cls}" role="dialog" aria-modal="true" aria-label="${esc(label)}"><div class="grabber" aria-hidden="true"></div>${inner}</div></div>`;
+  const wasOpen = !!$('#overlay').firstChild;
+  if (!wasOpen) lastFocus = document.activeElement;
+  $('#overlay').innerHTML = `<div class="scrim" data-a="close-overlay"><div class="dialog ${cls}" role="dialog" aria-modal="true" aria-label="${esc(label)}" tabindex="-1"><div class="grabber" aria-hidden="true"></div>${inner}</div></div>`;
   document.body.classList.add('modal-open');
+  if (!wasOpen) { pushLayer('overlay'); if (!$('#overlay').contains(document.activeElement)) $('#overlay .dialog').focus({ preventScroll: true }); }
 }
 let dialogTask = null, dlgTimer = null, dlgConfirm = false, remCustom = false;
-function closeOverlay() {
+function closeOverlay() { return $('#overlay').firstChild ? popLayer('overlay') : popChain; }
+function closeOverlayNow() {
+  if (!$('#overlay').firstChild) return;
   if (dialogTask && dlgTimer) { clearTimeout(dlgTimer); const cur = get(dialogTask); if (cur) put(cur, { silent: true }); }
   $('#overlay').innerHTML = ''; dialogTask = null; dlgTimer = null; document.body.classList.remove('modal-open');
   if (ramble.rec) stopListening();
+  if (lastFocus && document.contains(lastFocus)) try { lastFocus.focus({ preventScroll: true }); } catch {}
+  lastFocus = null;
 }
 
 /* ---------- detalhes da tarefa ---------- */
@@ -837,7 +972,8 @@ function startFocus(taskId) {
   if (F && F.taskId !== taskId && F.serverId) store.cancelServerReminder(F.serverId);
   const cycle = F && F.taskId === taskId ? F.cycle : 0;
   F = { taskId, phase: 'focus', running: true, endAt: Date.now() + prefs.focusMin * 60e3, left: 0, cycle };
-  saveF(); serverTimer(); closeOverlay(); focusOpen = true; renderFocus(); ensureTick();
+  saveF(); serverTimer(); ensureTick();
+  closeOverlay().then(() => { focusOpen = true; pushLayer('focus'); renderFocus(); });
 }
 function ensureTick() { clearInterval(focusTick); if (F) focusTick = setInterval(tick, 1000); }
 function tick() {
@@ -867,7 +1003,7 @@ function focusAction(a) {
   if (a === 'pause') { F.left = remaining(); F.running = false; }
   else if (a === 'resume') { F.running = true; F.endAt = Date.now() + F.left; }
   else if (a === 'skip') { F.endAt = Date.now(); F.running = true; saveF(); completePhase(); return; }
-  else if (a === 'stop') { if (F.serverId) store.cancelServerReminder(F.serverId); F = null; LS.del('den:focus'); focusOpen = false; $('#focus-root').innerHTML = ''; clearInterval(focusTick); render(); return; }
+  else if (a === 'stop') { if (F.serverId) store.cancelServerReminder(F.serverId); F = null; LS.del('den:focus'); if (layers.includes('focus')) popLayer('focus'); focusOpen = false; $('#focus-root').innerHTML = ''; clearInterval(focusTick); render(); return; }
   saveF(); serverTimer(); renderFocus();
 }
 function renderFocus() {
@@ -904,14 +1040,15 @@ function renderFocusPill() {
 }
 
 /* ================= Ramble (voz) ================= */
-const ramble = { rec: null, finalText: '', listening: false, removed: new Set(), wantStop: false };
+const ramble = { rec: null, finalText: '', listening: false, removed: new Set(), wantStop: false, items: null, editing: -1 };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 function openRamble() {
   unlockAudio();
-  ramble.finalText = ''; ramble.removed = new Set();
+  ramble.finalText = ''; ramble.removed = new Set(); ramble.items = null; ramble.editing = -1;
   openSheet(`<div class="dlg-head"><b>Ramble</b><span class="muted small">Fale à vontade. O Den separa em tarefas.</span><span class="grow"></span><button class="icon-btn" data-a="close-overlay" aria-label="Fechar">${I.x}</button></div>
     <div class="ramble">
       <label class="sr" for="ramble-text">O que você falou</label>
+      <button class="link-btn" id="ramble-unfreeze" data-a="ramble-unfreeze" hidden>Editar o texto de novo (descarta as correções)</button>
       <textarea id="ramble-text" class="ramble-text" placeholder="${SR ? 'Toque no microfone e fale, por exemplo: “ligar pro banco amanhã às 10, comprar presente pra Ana até sábado e mandar o relatório pra Marta, é urgente”' : 'Toque no microfone do teclado para ditar, ou escreva. Ex.: ligar pro banco amanhã às 10, comprar presente pra Ana até sábado…'}"></textarea>
       <div class="ramble-found" id="ramble-found"></div>
       <div class="ramble-bottom">
@@ -959,20 +1096,44 @@ function setListeningUi() {
   const b = $('#mic-btn'); if (b) { b.classList.toggle('on', ramble.listening); b.innerHTML = ramble.listening ? I.stop : I.mic; b.setAttribute('aria-label', ramble.listening ? 'Parar de ouvir' : 'Começar a ouvir'); }
   setRambleStatus(ramble.listening ? 'Ouvindo… fale naturalmente' : (ramble.finalText ? 'Revise as tarefas e adicione' : 'Toque no microfone para começar'));
 }
-function rambleTasks() { return splitRamble(ramble.finalText || '').filter((_, i) => !ramble.removed.has(i)); }
+function rambleTasks() { return ramble.items || splitRamble(ramble.finalText || '').filter((_, i) => !ramble.removed.has(i)); }
+function freezeRamble() {
+  if (ramble.items) return;
+  ramble.items = rambleTasks().map(t => ({ ...t, project: S.view.type === 'project' ? S.view.id : '' }));
+  stopListening();
+  const ta = $('#ramble-text'); if (ta) ta.readOnly = true;
+  $('#ramble-unfreeze')?.removeAttribute('hidden');
+}
+const foundMeta = t => [t.due ? dueLabel(t.due, t.time) : '', t.deadline ? 'Prazo ' + shortDate(t.deadline) : '', t.priority < 4 ? 'P' + t.priority : '', t.project && projById(t.project) ? projById(t.project).name : ''].filter(Boolean).map(esc).join(' · ') || 'Entrada';
 function updateRambleFound() {
-  const all = splitRamble(ramble.finalText || '');
   const el = $('#ramble-found'); if (!el) return;
-  const shown = all.map((t, i) => ({ t, i })).filter(x => !ramble.removed.has(x.i));
-  el.innerHTML = shown.length ? `<div class="mini-h">${shown.length} tarefa${shown.length === 1 ? '' : 's'} encontrada${shown.length === 1 ? '' : 's'}</div>` + shown.map(({ t, i }) => `<div class="found">
-    <span class="ring p${t.priority}"></span><div class="grow"><b>${esc(t.title)}</b><span class="found-meta">${[t.due ? dueLabel(t.due, t.time) : '', t.deadline ? 'Prazo ' + shortDate(t.deadline) : '', t.priority < 4 ? 'P' + t.priority : ''].filter(Boolean).map(esc).join(' · ') || 'Entrada'}</span></div>
+  const list = ramble.items ? ramble.items.map((t, i) => ({ t, i })) : splitRamble(ramble.finalText || '').map((t, i) => ({ t, i })).filter(x => !ramble.removed.has(x.i));
+  const projOpts = cur => `<option value="">Entrada</option>` + projects().map(p => `<option value="${esc(p.id)}"${p.id === cur ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  el.innerHTML = list.length ? `<div class="mini-h">${list.length} tarefa${list.length === 1 ? '' : 's'} encontrada${list.length === 1 ? '' : 's'} · toque para corrigir</div>` + list.map(({ t, i }) => ramble.items && ramble.editing === i ? `<div class="found edit" data-i="${i}">
+      <label class="sr" for="rf-title">Título</label><input id="rf-title" class="rf-in" value="${esc(t.title)}">
+      <div class="rf-grid">
+        <label><span>Data</span><input type="date" id="rf-due" value="${esc(t.due || '')}"></label>
+        <label><span>Hora</span><input type="time" id="rf-time" value="${esc(t.time || '')}"></label>
+        <label><span>Prazo</span><input type="date" id="rf-deadline" value="${esc(t.deadline || '')}"></label>
+        <label><span>Prioridade</span><select id="rf-pri">${[1, 2, 3, 4].map(n => `<option value="${n}"${t.priority === n ? ' selected' : ''}>P${n}</option>`).join('')}</select></label>
+        <label class="wide"><span>Projeto</span><select id="rf-proj">${projOpts(t.project)}</select></label>
+      </div>
+      <div class="rf-actions"><button class="btn ghost" data-a="ramble-rm" data-i="${i}">Remover</button><button class="btn primary" data-a="ramble-done">Pronto</button></div></div>`
+    : `<div class="found"><span class="ring p${t.priority}"></span><button class="found-main" data-a="ramble-edit" data-i="${i}" aria-label="Corrigir ${esc(t.title)}"><b>${esc(t.title)}</b><span class="found-meta">${foundMeta(t)}</span></button>
     <button class="icon-btn" data-a="ramble-rm" data-i="${i}" aria-label="Remover">${I.x}</button></div>`).join('') : '';
+  if (ramble.items && ramble.editing >= 0) {
+    const t = ramble.items[ramble.editing];
+    const bind = (id, k, fn = v => v || null) => $('#' + id)?.addEventListener('input', e => { t[k] = fn(e.target.value); });
+    bind('rf-title', 'title', v => v); bind('rf-due', 'due'); bind('rf-time', 'time'); bind('rf-deadline', 'deadline'); bind('rf-pri', 'priority', v => +v); bind('rf-proj', 'project', v => v);
+    $('#rf-pri')?.addEventListener('change', e => { t.priority = +e.target.value; }); $('#rf-proj')?.addEventListener('change', e => { t.project = e.target.value; });
+  }
+  const shown = list;
   const b = $('#ramble-add'); if (b) { b.disabled = !shown.length; b.textContent = shown.length ? `Adicionar ${shown.length} tarefa${shown.length === 1 ? '' : 's'}` : 'Adicionar tarefas'; }
 }
 function addRambleTasks() {
-  const list = rambleTasks(); if (!list.length) return;
-  const now = Date.now(); const project = S.view.type === 'project' ? S.view.id : null;
-  list.forEach((r, k) => put({ id: uid('t'), kind: 'task', title: r.title, desc: '', due: r.due, time: r.time, deadline: r.deadline, priority: r.priority, project, status: 'todo', done: false, createdAt: now + k,
+  const list = rambleTasks().filter(r => (r.title || '').trim()); if (!list.length) return;
+  const now = Date.now(); const viewProject = S.view.type === 'project' ? S.view.id : null;
+  list.forEach((r, k) => put({ id: uid('t'), kind: 'task', title: r.title.trim(), desc: '', due: r.due || (r.time ? today() : null), time: r.time, deadline: r.deadline, priority: r.priority, project: r.project !== undefined ? (r.project || null) : viewProject, status: 'todo', done: false, createdAt: now + k,
     reminders: r.due && r.time ? [{ at: new Date(`${r.due}T${r.time}`).toISOString(), label: 'Na hora' }] : [] }, { silent: k < list.length - 1 }));
   stopListening(); closeOverlay();
   toast(`${list.length} tarefa${list.length === 1 ? ' adicionada' : 's adicionadas'}`);
@@ -996,7 +1157,7 @@ document.addEventListener('click', e => {
       const v = { type: el.dataset.type }; if (el.dataset.id) v.id = el.dataset.id; if (el.dataset.tag) v.tag = el.dataset.tag;
       go(v); break;
     }
-    case 'tag': e.stopPropagation(); closeOverlay(); go({ type: 'tag', tag: el.dataset.tag }); break;
+    case 'tag': e.stopPropagation(); go({ type: 'tag', tag: el.dataset.tag }); break;
     case 'mode': {
       const m = el.dataset.mode;
       if (m === 'calendar' || m === 'matrix') { go({ type: m }); break; }
@@ -1010,7 +1171,7 @@ document.addEventListener('click', e => {
     case 'ramble': closeSide(); openRamble(); break;
     case 'new-note': newNote(); break;
     case 'open-note': e.stopPropagation(); openNote(id); break;
-    case 'back': cleanupEmptyNote(); S.reading = false; render(); break;
+    case 'back': if (layers.includes('note')) popLayer('note'); else { cleanupEmptyNote(); S.reading = false; render(); } break;
     case 'note-pin': { const n = get(S.noteId); if (n) put({ ...n, pinned: !n.pinned }); break; }
     case 'note-mode': flushNote(S.noteId); S.noteMode = S.noteMode === 'read' ? 'edit' : 'read'; renderMain(); if (S.noteMode === 'edit') $('#ed-ta')?.focus(); break;
     case 'note-del': delConfirm = true; renderMain(); break;
@@ -1039,7 +1200,7 @@ document.addEventListener('click', e => {
     case 'edit-project': openProjectDialog(id); break;
     case 'show-done': S.showDone = !S.showDone; render(); break;
     case 'move-overdue': { const td = today(); openTasks().filter(t => t.due && t.due < td).forEach(t => put({ ...t, ...retime(t, td, t.time) }, { silent: true })); render(); toast('Tarefas atrasadas movidas para hoje'); break; }
-    case 'side-open': $('#app').classList.add('side-open'); break;
+    case 'side-open': openSide(); break;
     case 'side-close': closeSide(); break;
     case 'undo': if (toastFn) { toastFn(); toastFn = null; } $('#toast-root').innerHTML = ''; break;
     case 'd-toggle': { const t = get(dialogTask); if (t) updateTask(t.id, { done: !t.done, doneAt: !t.done ? Date.now() : null, status: !t.done ? 'done' : 'todo' }); break; }
@@ -1052,19 +1213,30 @@ document.addEventListener('click', e => {
     case 'rem-del': { const t = get(dialogTask); const r = [...(t.reminders || [])]; r.splice(+el.dataset.i, 1); updateTask(t.id, { reminders: r }); break; }
     case 'rem-add-custom': { const v = $('#rem-custom')?.value; if (v) addReminder(dialogTask, new Date(v), 'Personalizado'); break; }
     case 'enable-notif': enableNotifications().then(() => { if (dialogTask) renderDialog(); }); break;
+    case 'test-push': store.scheduleServerReminder('Notificação de teste: está funcionando!', Date.now() + 15000, 'test').then(id => toast(id ? 'Enviada. Feche ou bloqueie o app: o aviso chega em até 1 minuto.' : 'Não foi possível agendar o teste. Verifique a internet.', null, 6000)); break;
+    case 'text-size': prefs.textSize = el.dataset.v; savePrefs(); applyTextSize(); render(); break;
     case 'test-notif': osNotify('Den', 'As notificações estão funcionando.', 'test').then(ok => { if (!ok) toast('Não foi possível mostrar a notificação.'); }); break;
     case 'resched': { const d = el.dataset.d; const t = get(id); const v = d === '' ? null : d === 'next' ? nextWeek() : addDays(today(), +d); if (t) put({ ...t, ...retime(t, v, v ? t.time : null) }); closeOverlay(); toast(v ? 'Reagendada para ' + dueInfo(v).label.toLowerCase() : 'Data removida'); break; }
-    case 'cal-prev': case 'cal-next': { const [y, m] = S.calMonth.split('-').map(Number); const d = new Date(y, m - 1 + (a === 'cal-next' ? 1 : -1), 1); S.calMonth = ymd(d).slice(0, 7); render(); break; }
+    case 'cal-prev': case 'cal-next': calShift(a === 'cal-next' ? 1 : -1); break;
+    case 'cal-mode': S.calMode = el.dataset.m; LS.set('den:calmode', S.calMode); render(); break;
     case 'cal-today': S.calMonth = today().slice(0, 7); S.calSel = today(); render(); break;
     case 'cal-sel': S.calSel = el.dataset.date; if (S.calSel.slice(0, 7) !== S.calMonth) S.calMonth = S.calSel.slice(0, 7); render(); break;
     case 'cal-add': S.calSel = el.dataset.date; openQuickAdd({ due: el.dataset.date }); break;
     case 'quad-add': { const q = el.dataset.quad; const [, , , imp, urg] = QUADS.find(x => x[0] === q); openQuickAdd({ priority: imp ? 2 : 3, due: urg ? today() : null }); break; }
     case 'focus-start': startFocus(id); break;
     case 'focus-act': focusAction(el.dataset.f); break;
-    case 'focus-min': focusOpen = false; renderFocus(); renderFocusPill(); break;
-    case 'focus-open': focusOpen = true; renderFocus(); renderFocusPill(); break;
+    case 'focus-min': if (layers.includes('focus')) popLayer('focus'); else { focusOpen = false; renderFocus(); renderFocusPill(); } break;
+    case 'focus-open': focusOpen = true; pushLayer('focus'); renderFocus(); renderFocusPill(); break;
     case 'ramble-mic': if (ramble.listening) stopListening(); else startListening(); break;
-    case 'ramble-rm': ramble.removed.add(+el.dataset.i); updateRambleFound(); break;
+    case 'ramble-rm': if (ramble.items) { ramble.items.splice(+el.dataset.i, 1); ramble.editing = -1; } else ramble.removed.add(+el.dataset.i); updateRambleFound(); break;
+    case 'ramble-edit': freezeRamble(); ramble.editing = +el.dataset.i; updateRambleFound(); $('#rf-title')?.focus(); break;
+    case 'ramble-done': ramble.editing = -1; updateRambleFound(); break;
+    case 'ramble-unfreeze': { ramble.items = null; ramble.editing = -1; ramble.removed = new Set(); const ta = $('#ramble-text'); if (ta) { ta.readOnly = false; ta.focus(); } el.hidden = true; updateRambleFound(); break; }
+    case 'hint-ok': LS.set('den:hint-gestures', true); el.closest('.coach')?.remove(); break;
+    case 'col-jump': { const col = $('.board')?.children[+el.dataset.i]; col?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', inline: 'start', block: 'nearest' }); break; }
+    case 'mv-status': { const t = get(id); const s2 = el.dataset.s; if (t) put({ ...t, status: s2, done: s2 === 'done', doneAt: s2 === 'done' ? (t.doneAt || Date.now()) : null }); closeOverlay(); toast('Movida para ' + STATUSES.find(x => x[0] === s2)[1]); break; }
+    case 'mv-quad': { const t = get(id); if (t) { const patch = moveToQuad(t, el.dataset.q); if (Object.keys(patch).length) put({ ...t, ...patch }); } closeOverlay(); toast('Movida para ' + QUADS.find(x => x[0] === el.dataset.q)[1]); break; }
+    case 'mv-open': closeOverlay().then(() => openTask(id)); break;
     case 'ramble-add': addRambleTasks(); break;
     case 'settings': go({ type: 'settings' }); break;
     case 'go-auth': LS.del('den:mode'); showAuth(); break;
@@ -1075,7 +1247,12 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.matches?.('.t-body')) { e.preventDefault(); openTask(e.target.dataset.id); return; }
-  if (e.key === 'Escape') { if ($('#overlay').firstChild) { closeOverlay(); return; } if (focusOpen) { focusOpen = false; renderFocus(); renderFocusPill(); return; } closeSide(); }
+  if (e.key === 'Escape') { if ($('#overlay').firstChild) { closeOverlay(); return; } if (focusOpen) { if (layers.includes('focus')) popLayer('focus'); else { focusOpen = false; renderFocus(); renderFocusPill(); } return; } closeSide(); }
+  // mantém o Tab dentro da janela aberta
+  if (e.key === 'Tab' && $('#overlay').firstChild) {
+    const f = [...$('#overlay .dialog').querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(x => !x.disabled && x.offsetParent !== null);
+    if (f.length) { const first = f[0], last = f[f.length - 1]; if (e.shiftKey && (document.activeElement === first || document.activeElement === $('#overlay .dialog'))) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
+  }
   const typing = e.target.closest?.('input, textarea, select, [contenteditable]');
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'e' && S.noteId && layoutOf() === 'notes') { e.preventDefault(); flushNote(S.noteId); S.noteMode = S.noteMode === 'read' ? 'edit' : 'read'; renderMain(); if (S.noteMode === 'edit') $('#ed-ta')?.focus(); return; }
   if (typing || e.metaKey || e.ctrlKey || e.altKey || $('#overlay').firstChild || !S.started) return;
@@ -1102,12 +1279,55 @@ $('#side-settings').addEventListener('click', () => go({ type: 'settings' }));
   fab.addEventListener('contextmenu', e => e.preventDefault());
 })();
 
+/* ---------- segurar uma tarefa ou cartão para mover ---------- */
+let suppressClick = false;
+function openMoveSheet(id) {
+  const t = get(id); if (!t) return;
+  const lay = layoutOf(); const board = lay === 'tasks' && (S.modes[viewKey()] || 'list') === 'board';
+  let sec = '';
+  if (board) sec += `<h5>Etapa</h5>` + STATUSES.map(([k, l, c]) => `<button class="mv-opt${(t.done ? 'done' : (t.status || 'todo')) === k ? ' cur' : ''}" data-a="mv-status" data-id="${esc(id)}" data-s="${k}"><i style="background:${c}"></i>${l}${(t.done ? 'done' : (t.status || 'todo')) === k ? '<span class="muted small">atual</span>' : ''}</button>`).join('');
+  if (lay === 'matrix') sec += `<h5>Quadrante</h5>` + QUADS.map(([k, name, , imp, urg]) => { const cur = isImportant(t) === imp && !!isUrgent(t) === urg; return `<button class="mv-opt${cur ? ' cur' : ''}" data-a="mv-quad" data-id="${esc(id)}" data-q="${k}"><i class="qd-${k}"></i>${name}${cur ? '<span class="muted small">atual</span>' : ''}</button>`; }).join('');
+  sec += `<h5>Data</h5><div class="mv-dates">${[['0', 'Hoje'], ['1', 'Amanhã'], ['next', 'Próx. semana'], ['', 'Sem data']].map(([d, l]) => `<button class="quick-btn" data-a="resched" data-id="${esc(id)}" data-d="${d}">${l}</button>`).join('')}</div>`;
+  openSheet(`<div class="dlg-head"><b>Mover</b><span class="muted small mv-title">${esc(plainTitle(t.title))}</span><span class="grow"></span><button class="icon-btn" data-a="close-overlay" aria-label="Fechar">${I.x}</button></div>
+    <div class="mv">${sec}<button class="mv-opt open" data-a="mv-open" data-id="${esc(id)}">${ic('pen', 'sm')}Abrir detalhes</button></div>`, 'Mover tarefa', 'narrow');
+}
+(() => {
+  const main = $('#main'); let timer = null, sx = 0, sy = 0;
+  // um toque novo sempre começa liberado (o clique só é ignorado logo depois de segurar)
+  main.addEventListener('pointerdown', () => { suppressClick = false; }, true);
+  main.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    const el = e.target.closest('.task, .card'); if (!el || e.target.closest('.check, a, .t-link')) return;
+    sx = e.clientX; sy = e.clientY; clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; suppressClick = true; try { navigator.vibrate?.(15); } catch {} openMoveSheet(el.dataset.id); }, 480);
+  });
+  main.addEventListener('pointermove', e => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) { clearTimeout(timer); timer = null; } });
+  const stop = () => { clearTimeout(timer); timer = null; };
+  main.addEventListener('pointerup', stop); main.addEventListener('pointercancel', stop);
+  main.addEventListener('contextmenu', e => { if (e.target.closest('.task, .card') && touchOnly) e.preventDefault(); });
+  main.addEventListener('click', e => { if (suppressClick) { suppressClick = false; e.stopPropagation(); e.preventDefault(); } }, true);
+})();
+
+/* ---------- calendário: deslizar para o lado troca de mês ou semana ---------- */
+(() => {
+  const main = $('#main'); let sx = 0, sy = 0, on = false;
+  main.addEventListener('pointerdown', e => { if (e.pointerType !== 'touch' || layoutOf() !== 'calendar' || !e.target.closest('.cal, .week-strip')) return; on = true; sx = e.clientX; sy = e.clientY; });
+  main.addEventListener('pointerup', e => {
+    if (!on) return; on = false;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) { suppressClick = true; setTimeout(() => { suppressClick = false; }, 350); calShift(dx < 0 ? 1 : -1); }
+  });
+  main.addEventListener('pointercancel', () => { on = false; });
+})();
+
 /* ---------- deslizar tarefas no celular ---------- */
 (() => {
   let row = null, sx = 0, sy = 0, dx = 0, active = false;
   const main = $('#main');
   main.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'touch') return;
+    // perto da borda o iPhone usa o gesto de voltar: não começa o deslize ali
+    if (e.clientX < 24 || e.clientX > innerWidth - 24) return;
     const r = e.target.closest('.task'); if (!r || r.closest('.quad-list') || e.target.closest('.check')) return;
     row = r; sx = e.clientX; sy = e.clientY; dx = 0; active = false;
   });
@@ -1225,14 +1445,17 @@ async function startSession(user) {
   if (user) store.migrateLocal();
   S.started = true; render();
   if (user) {
+    S.loading = !store.state.items.size; if (S.loading) render();
     await store.pull(true);
+    S.loading = false; render();
     store.startRealtime(); store.flush();
+    ensurePush();
   }
   if (!store.state.items.size && !LS.get(`den:${uidv}:seeded`)) { LS.set(`den:${uidv}:seeded`, true); seedExamples(); }
   if (F) ensureTick();
 }
 store.on(what => {
-  if (what === 'status') { renderSync(); if (S.view.type === 'settings') renderMain(); return; }
+  if (what === 'status') { renderSync(); renderNet(); if (S.view.type === 'settings') renderMain(); return; }
   if (!S.started) return;
   render();
   if (dialogTask && !$('#overlay .task-dialog')?.contains(document.activeElement)) renderDialog();
@@ -1244,6 +1467,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (['inbox', 'today', 'upcoming', 'project'].includes(S.view.type)) LS.set('den:lastList', S.view); }, 1000);
 
 async function boot() {
+  const hv = viewFromHash(location.hash); if (hv) S.view = hv;
+  history.replaceState({ den: 1, view: S.view }, '', '#' + hashFor(S.view));
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   store.sb.auth.onAuthStateChange((ev, session) => {
     if (ev === 'PASSWORD_RECOVERY') { setTimeout(promptNewPassword, 300); }

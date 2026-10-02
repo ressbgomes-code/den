@@ -147,6 +147,8 @@ export function parseQuick(text, opts = {}) {
   const tm = findTime(t);
   if (tm) { out.time = tm.value; t = strip(t, tm); if (!out.due) out.due = out.deadline || today(); }
   out.title = t.replace(/\s*,(\s*,)+/g, ',').replace(/\s+/g, ' ').replace(/^[\s,.;-]+|[\s,;-]+$/g, '').trim();
+  // restos de frases faladas: "…pra Marta, é", "…, isso", "…, e", "…, it's"
+  for (let k = 0; k < 3; k++) out.title = out.title.replace(/(?:[\s,;]+|^)(?:isso é|isso|isto é|isto|é|e|o prazo é|o prazo|que é|it'?s|that'?s|is|and)$/i, '').replace(/[\s,;-]+$/, '').trim();
   if (out.due) out.found.push(dueLabel(out.due, out.time));
   if (out.deadline) out.found.push('Prazo ' + dueInfo(out.deadline).label.toLowerCase());
   if (out.priority) out.found.push('P' + out.priority);

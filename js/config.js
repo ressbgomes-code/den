@@ -4,6 +4,6 @@ window.DEN_CONFIG = {
   supabaseUrl: 'https://uivvbxriwsujcgkzilyk.supabase.co',
   supabaseKey: 'sb_publishable_mAYU0A_w4JkPhyesmu-_UQ_OlSojwpb',
   // Chave pública para notificações push (preenchida na etapa dos lembretes).
-  vapidPublicKey: '',
-  version: '1.0.0',
+  vapidPublicKey: 'BJpSdFMcK4gsAhoMI9w3J3shCOutrL85bdImVSakfRjIlck-pw2u6oBCF0QFT1nVUGzvRsqm1Pr-vkW4hloxL2c',
+  version: '1.1.0',
 };

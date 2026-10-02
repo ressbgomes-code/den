@@ -135,7 +135,7 @@ export function startRealtime() {
 }
 function stopRealtime() { if (channel) { sb.removeChannel(channel); channel = null; } }
 
-export function remoteCount() { return state.items.size; }
+export const pendingCount = () => outbox.size;
 
 /* ---------- conta ---------- */
 
