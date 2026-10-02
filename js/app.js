@@ -56,7 +56,7 @@ const standalone = () => matchMedia('(display-mode: standalone)').matches || nav
 const PCOLORS = ['#db4035', '#ff9933', '#fad000', '#7ecc49', '#299438', '#14aaf5', '#4073ff', '#884dff', '#e05194', '#808080'];
 const STATUSES = [['todo', 'A fazer', '#9a9ea5'], ['doing', 'Em andamento', '#246fe0'], ['waiting', 'Aguardando', '#eb8909'], ['done', 'Feito', '#058527']];
 
-const prefs = Object.assign({ focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, rambleLang: 'pt-BR', textSize: 'normal' }, LS.get('den:prefs', {}));
+const prefs = Object.assign({ focusMin: 25, shortMin: 5, longMin: 15, longEvery: 4, rambleLang: 'pt-BR', textSize: 'normal', theme: 'auto' }, LS.get('den:prefs', {}));
 const savePrefs = () => LS.set('den:prefs', prefs);
 // Tamanho do texto no celular (o iPhone não aplica o ajuste do sistema em apps web).
 function applyTextSize() {
@@ -64,6 +64,24 @@ function applyTextSize() {
   document.documentElement.style.webkitTextSizeAdjust = v; document.documentElement.style.textSizeAdjust = v;
 }
 applyTextSize();
+// Temas: auto (grafite, segue o aparelho), light (tudo claro), graphite (claro com barra grafite), dark, nord.
+const THEMES = [
+  { k: 'auto', name: 'Automático', desc: 'Grafite claro ou escuro, conforme o aparelho', side: '#2b2e31', bg: 'linear-gradient(135deg,#ffffff 50%,#1e2023 50%)', line: '#c9cbcf', acc: '#c93c30' },
+  { k: 'light', name: 'Claro', desc: 'Tudo claro, inclusive a barra lateral', side: '#f4f4f5', bg: '#ffffff', line: '#e2e2e5', acc: '#c93c30', sideLine: '#c9cbcf' },
+  { k: 'graphite', name: 'Claro com grafite', desc: 'O visual do computador: barra grafite e conteúdo claro', side: '#2b2e31', bg: '#ffffff', line: '#e2e2e5', acc: '#c93c30' },
+  { k: 'dark', name: 'Escuro', desc: 'Sempre escuro', side: '#17191b', bg: '#1e2023', line: '#3a3d42', acc: '#ec6b5e' },
+  { k: 'nord', name: 'Nord', desc: 'Azul-gelo da paleta Nord', side: '#242933', bg: '#2e3440', line: '#4c566a', acc: '#88c0d0' },
+];
+function applyTheme() {
+  const t = prefs.theme || 'auto';
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  const bar = { light: '#ffffff', graphite: '#ffffff', dark: '#1e2023', nord: '#2e3440' }[t];
+  document.querySelectorAll('meta[name="theme-color"]').forEach((m, i) => {
+    if (bar) { m.setAttribute('content', bar); m.removeAttribute('media'); }
+    else { m.setAttribute('media', i === 0 ? '(prefers-color-scheme: light)' : '(prefers-color-scheme: dark)'); m.setAttribute('content', i === 0 ? '#ffffff' : '#1e2023'); }
+  });
+}
+applyTheme();
 // Teclado do celular: a janela acompanha a área visível e fica acima das teclas.
 if (window.visualViewport) {
   const vv = window.visualViewport;
@@ -611,6 +629,9 @@ function renderSettings(main) {
       : `<p><b>${esc(st.email || '')}</b></p><p class="muted small">Status: ${esc({ synced: 'sincronizado', saving: 'salvando…', offline: 'sem internet, as mudanças vão sincronizar depois', error: 'erro ao sincronizar, tentando de novo' }[st.status] || st.status)}</p>
          <div class="row"><button class="btn ghost" data-a="sync-now">Sincronizar agora</button><button class="btn danger" data-a="sign-out">Sair</button></div>`}</section>
     <section><h2>Notificações</h2><p>${notifTxt}</p>${ns === 'default' ? '<button class="btn primary" data-a="enable-notif">Ativar notificações</button>' : ''}${ns === 'granted' ? `<div class="row"><button class="btn ghost" data-a="test-notif">Testar neste aparelho</button>${st.uid !== 'local' ? '<button class="btn ghost" data-a="test-push">Testar com o app fechado</button>' : ''}</div>` : ''}${pushNote}</section>
+    <section><h2>Tema</h2><div class="themes" role="radiogroup" aria-label="Tema">${THEMES.map(t => `<button role="radio" aria-checked="${prefs.theme === t.k}" class="theme-opt${prefs.theme === t.k ? ' on' : ''}" data-a="theme" data-v="${t.k}">
+      <span class="tp" aria-hidden="true"><span class="s" style="background:${t.side}"><i style="background:${t.acc};width:70%"></i><i style="background:${t.sideLine || 'rgba(255,255,255,.25)'}"></i><i style="background:${t.sideLine || 'rgba(255,255,255,.25)'};width:80%"></i></span><span class="c" style="background:${t.bg}"><i style="background:${t.line};width:80%"></i><i style="background:${t.line}"></i><i style="background:${t.acc};width:35%"></i></span></span>
+      <b>${t.name}</b><small>${t.desc}</small></button>`).join('')}</div></section>
     <section><h2>Tamanho do texto</h2><p class="muted small">Vale para o celular. No computador, use o zoom do navegador.</p><div class="seg" role="radiogroup" aria-label="Tamanho do texto">${[['normal', 'Normal'], ['grande', 'Grande'], ['maior', 'Maior']].map(([k, l]) => `<button role="radio" aria-checked="${prefs.textSize === k}" class="${prefs.textSize === k ? 'on' : ''}" data-a="text-size" data-v="${k}">${l}</button>`).join('')}</div></section>
     <section><h2>Pomodoro</h2><div class="nums">${field('pf-focus', 'Foco (min)', prefs.focusMin, 5, 120)}${field('pf-short', 'Pausa curta', prefs.shortMin, 1, 30)}${field('pf-long', 'Pausa longa', prefs.longMin, 5, 60)}${field('pf-every', 'Pausa longa a cada', prefs.longEvery, 2, 8)}</div></section>
     <section><h2>Ramble</h2><label class="num-field wide"><span>Idioma da fala</span><select id="pf-lang"><option value="pt-BR"${prefs.rambleLang === 'pt-BR' ? ' selected' : ''}>Português (Brasil)</option><option value="en-US"${prefs.rambleLang === 'en-US' ? ' selected' : ''}>English</option></select></label></section>
@@ -1214,6 +1235,7 @@ document.addEventListener('click', e => {
     case 'rem-add-custom': { const v = $('#rem-custom')?.value; if (v) addReminder(dialogTask, new Date(v), 'Personalizado'); break; }
     case 'enable-notif': enableNotifications().then(() => { if (dialogTask) renderDialog(); }); break;
     case 'test-push': store.scheduleServerReminder('Notificação de teste: está funcionando!', Date.now() + 15000, 'test').then(id => toast(id ? 'Enviada. Feche ou bloqueie o app: o aviso chega em até 1 minuto.' : 'Não foi possível agendar o teste. Verifique a internet.', null, 6000)); break;
+    case 'theme': prefs.theme = el.dataset.v; savePrefs(); applyTheme(); render(); toast('Tema: ' + THEMES.find(t => t.k === prefs.theme).name); break;
     case 'text-size': prefs.textSize = el.dataset.v; savePrefs(); applyTextSize(); render(); break;
     case 'test-notif': osNotify('Den', 'As notificações estão funcionando.', 'test').then(ok => { if (!ok) toast('Não foi possível mostrar a notificação.'); }); break;
     case 'resched': { const d = el.dataset.d; const t = get(id); const v = d === '' ? null : d === 'next' ? nextWeek() : addDays(today(), +d); if (t) put({ ...t, ...retime(t, v, v ? t.time : null) }); closeOverlay(); toast(v ? 'Reagendada para ' + dueInfo(v).label.toLowerCase() : 'Data removida'); break; }
