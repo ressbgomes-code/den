@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Den</title>
+<meta name="description" content="Tarefas e notas: Todoist encontra o Bear.">
+<meta name="theme-color" content="#2b2e31">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Den">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito+Sans:ital,opsz,wght@0,6..12,400;0,6..12,600;0,6..12,700;0,6..12,800;1,6..12,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="auth" class="auth" hidden></div>
+
+<div class="app" id="app" hidden>
+  <aside class="side" id="side" aria-label="Menu">
+    <div class="side-top">
+      <div class="brand">
+        <span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M5 12.5l4.2 4.2L19 7"/></svg></span>
+        Den
+        <span class="sync" id="sync"><i></i><span></span></span>
+      </div>
+      <label class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><input id="search" type="search" placeholder="Buscar tarefas e notas" autocomplete="off" aria-label="Buscar"></label>
+      <div class="side-actions">
+        <button class="side-btn primary" data-a="quick-add" title="Nova tarefa (Q)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Tarefa</button>
+        <button class="side-btn" data-a="ramble" title="Adicionar por voz (V)"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>Ramble</button>
+      </div>
+    </div>
+    <nav class="side-nav" id="side-nav" aria-label="Listas"></nav>
+    <div class="side-foot">
+      <button class="nav" id="side-settings"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2.5 12h3M18.5 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></span><span class="lbl">Ajustes</span></button>
+    </div>
+  </aside>
+  <div class="side-scrim" data-a="side-close"></div>
+  <main class="main" id="main"></main>
+  <div class="focus-pill" id="focus-pill" hidden></div>
+  <button class="fab" id="fab" aria-label="Nova tarefa (segure para falar)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <nav class="tabbar" id="tabbar" aria-label="Navegação"></nav>
+</div>
+
+<div id="overlay"></div>
+<div id="focus-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+
+<noscript>O Den precisa de JavaScript para funcionar.</noscript>
+<script src="vendor/supabase.js"></script>
+<script src="js/config.js"></script>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
