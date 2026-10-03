@@ -130,11 +130,11 @@ function chime() {
   } catch {}
   try { navigator.vibrate?.([120, 80, 120]); } catch {}
 }
-async function osNotify(title, body, tag) {
+async function osNotify(title, body, tag, url = './') {
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return false;
     const reg = await navigator.serviceWorker?.ready;
-    if (reg) { await reg.showNotification(title, { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' }); return true; }
+    if (reg) { await reg.showNotification(title, { body, tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url } }); return true; }
   } catch {}
   return false;
 }
@@ -180,7 +180,7 @@ function checkReminders() {
     if (at <= now && at > now - 15 * 60e3 && !fired.has(k)) {
       fired.add(k); LS.set('den:fired', [...fired].slice(-300));
       chime(); toast('Lembrete: ' + plainTitle(t.title), null, 8000);
-      if (document.visibilityState !== 'visible') osNotify('Lembrete', plainTitle(t.title), k);
+      if (document.visibilityState !== 'visible') osNotify('Lembrete', plainTitle(t.title), 'den-' + t.id, './#tarefa=' + encodeURIComponent(t.id));
     }
   }
 }
@@ -826,7 +826,7 @@ function openSheet(inner, label, cls = '') {
   document.body.classList.add('modal-open');
   if (!wasOpen) { pushLayer('overlay'); if (!$('#overlay').contains(document.activeElement)) $('#overlay .dialog').focus({ preventScroll: true }); }
 }
-let dialogTask = null, dlgTimer = null, dlgConfirm = false, remCustom = false;
+let dialogTask = null, dlgTimer = null, dlgConfirm = false, remCustom = false, dlgFromNotif = false;
 function closeOverlay() { return $('#overlay').firstChild ? popLayer('overlay') : popChain; }
 function closeOverlayNow() {
   if (!$('#overlay').firstChild) return;
@@ -838,7 +838,30 @@ function closeOverlayNow() {
 }
 
 /* ---------- detalhes da tarefa ---------- */
-function openTask(id) { dialogTask = id; dlgConfirm = false; remCustom = false; renderDialog(); }
+function openTask(id, fromNotif = false) { dialogTask = id; dlgFromNotif = fromNotif; dlgConfirm = false; remCustom = false; renderDialog(); }
+// Tarefa pedida por uma notificação: abre assim que os dados estiverem carregados.
+let pendingTask = null;
+function tryOpenPending(final = false) {
+  if (!pendingTask || !S.started || S.loading) return;
+  const t = get(pendingTask);
+  if (t && !t.deleted) { pendingTask = null; openTask(t.id, true); }
+  else if (final) { pendingTask = null; toast('Essa tarefa não existe mais.'); }
+}
+// Adiar pela notificação: troca os lembretes que já passaram por um novo horário.
+function snoozeTask(id, m) {
+  const t = get(id); if (!t) return;
+  const now = Date.now(); let patch = {}, at;
+  if (m === 'tomorrow') {
+    const d = addDays(today(), 1); patch = retime(t, d, t.time);
+    at = new Date(`${d}T${t.time || '09:00'}`);
+  } else at = new Date(now + (+m) * 60e3);
+  const iso = at.toISOString();
+  const keep = (patch.reminders || t.reminders || []).filter(r => Date.parse(r.at) > now && r.at !== iso);
+  put({ ...t, ...patch, reminders: [...keep, { at: iso, label: 'Adiado' }] });
+  closeOverlay();
+  const when = m === 'tomorrow' ? `amanhã às ${pad(at.getHours())}:${pad(at.getMinutes())}` : `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+  toast(`Lembrete adiado para ${when}`, () => put({ ...get(id), due: t.due, time: t.time, reminders: t.reminders || [] }));
+}
 const remLabel = r => { const d = new Date(r.at); return `${WD_SHORT[d.getDay()]}, ${d.getDate()} ${MO[d.getMonth()]} · ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
 function renderDialog() {
   const t = get(dialogTask);
@@ -856,6 +879,10 @@ function renderDialog() {
     <div class="dlg-head">${p ? `<i class="pdot" style="background:${esc(p.color)}"></i>${esc(p.name)}` : `${ic('inbox', 'sm')} Entrada`}<span class="grow"></span>
       ${dlgConfirm ? `<span class="confirm">Apagar tarefa? <button class="btn danger" data-a="d-del-yes">Apagar</button><button class="btn ghost" data-a="d-del-no">Manter</button></span>` : `<button class="icon-btn" data-a="d-del" aria-label="Apagar tarefa">${I.trash}</button>`}
       <button class="icon-btn" data-a="close-overlay" aria-label="Fechar">${I.x}</button></div>
+    ${dlgFromNotif && !t.done ? `<div class="notif-act" role="group" aria-label="Lembrete">
+      <button class="btn primary big" data-a="n-done">${ic('check', 'sm')}Concluir</button>
+      <div class="na-snooze"><span class="na-l">${ic('bell', 'sm')}Adiar</span>${[['15', '15 min'], ['60', '1 hora'], ['180', '3 horas'], ['tomorrow', 'Amanhã']].map(([m, l]) => `<button class="quick-btn" data-a="n-snooze" data-m="${m}">${l}</button>`).join('')}</div>
+    </div>` : ''}
     <div class="dlg-body">
       <div class="dlg-main">
         <div class="dlg-title-row"><button class="check p${t.priority || 4}${t.done ? ' is-done' : ''}" data-a="d-toggle" aria-label="${t.done ? 'Marcar como não feita' : 'Concluir tarefa'}">${I.check}</button>
@@ -914,7 +941,7 @@ function retime(t, due, time) {
   const patch = { due, time };
   if (t.due && (t.reminders || []).length) {
     const oldBase = new Date(`${t.due}T${t.time || '09:00'}`).getTime();
-    if (due) { const nb = new Date(`${due}T${time || '09:00'}`).getTime(); patch.reminders = t.reminders.map(r => r.label && r.label !== 'Personalizado' ? { ...r, at: new Date(nb - (oldBase - Date.parse(r.at))).toISOString() } : r); }
+    if (due) { const nb = new Date(`${due}T${time || '09:00'}`).getTime(); patch.reminders = t.reminders.map(r => r.label && !['Personalizado', 'Adiado'].includes(r.label) ? { ...r, at: new Date(nb - (oldBase - Date.parse(r.at))).toISOString() } : r); }
   } else if (due && time && !(t.reminders || []).length) patch.reminders = [{ at: new Date(`${due}T${time}`).toISOString(), label: 'Na hora' }];
   return patch;
 }
@@ -1197,6 +1224,8 @@ document.addEventListener('click', e => {
       S.modes[viewKey()] = m; S.composerKey = null; composerEl = null; saveView(); render(); break;
     }
     case 'toggle': e.stopPropagation(); toggleTask(id, el.closest('.task, .card')); break;
+    case 'n-done': { const tid = dialogTask; closeOverlay(); if (tid && !get(tid)?.done) toggleTask(tid); break; }
+    case 'n-snooze': snoozeTask(dialogTask, el.dataset.m); break;
     case 'open': openTask(id); break;
     case 'compose': { let p = {}; try { p = JSON.parse(el.dataset.preset || '{}'); } catch {} openInlineComposer(el.dataset.key, p); break; }
     case 'quick-add': closeSide(); openQuickAdd(); break;
@@ -1485,6 +1514,7 @@ async function startSession(user) {
     ensurePush();
   }
   if (!store.state.items.size && !LS.get(`den:${uidv}:seeded`)) { LS.set(`den:${uidv}:seeded`, true); seedExamples(); }
+  tryOpenPending(true);
   if (F) ensureTick();
 }
 store.on(what => {
@@ -1492,6 +1522,7 @@ store.on(what => {
   if (!S.started) return;
   render();
   if (dialogTask && !$('#overlay .task-dialog')?.contains(document.activeElement)) renderDialog();
+  tryOpenPending();
 });
 mq.addEventListener('change', () => { lastLayout = null; render(); });
 setInterval(() => { if (S.started) { checkReminders(); if (!document.activeElement?.closest?.('input, textarea')) renderSide(); } }, 20000);
@@ -1500,9 +1531,14 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (['inbox', 'today', 'upcoming', 'project'].includes(S.view.type)) LS.set('den:lastList', S.view); }, 1000);
 
 async function boot() {
+  const tm = /^#tarefa=(.+)$/.exec(location.hash); if (tm) pendingTask = decodeURIComponent(tm[1]);
   const hv = viewFromHash(location.hash); if (hv) S.view = hv;
   history.replaceState({ den: 1, view: S.view }, '', '#' + hashFor(S.view));
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    // Notificação tocada com o app já aberto: o service worker avisa qual tarefa abrir.
+    navigator.serviceWorker.addEventListener('message', e => { if (e.data?.type === 'open-task' && e.data.id) { pendingTask = e.data.id; tryOpenPending(true); } });
+  }
   store.sb.auth.onAuthStateChange((ev, session) => {
     if (ev === 'PASSWORD_RECOVERY') { setTimeout(promptNewPassword, 300); }
     if (session?.user && (ev === 'SIGNED_IN' || ev === 'INITIAL_SESSION')) startSession(session.user);

@@ -78,7 +78,7 @@ type Sub = { id: string; user_id: string; endpoint: string; p256dh: string; auth
 function messageFor(r: Reminder) {
   if (r.task_id.startsWith('focus:')) return { title: r.title, body: 'Toque para abrir o Den', tag: 'den-focus', url: './' };
   if (r.task_id === 'test') return { title: 'Den', body: r.title, tag: 'den-test', url: './' };
-  return { title: 'Lembrete', body: r.title, tag: 'den-' + r.task_id, url: './' };
+  return { title: 'Lembrete', body: r.title, tag: 'den-' + r.task_id, url: './#tarefa=' + encodeURIComponent(r.task_id) };
 }
 
 async function run(): Promise<Record<string, number>> {

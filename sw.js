@@ -1,5 +1,5 @@
 // Service worker do Den: funciona offline e recebe notificações.
-const VERSION = 'den-v1.3.0';
+const VERSION = 'den-v1.3.1';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/parse.js', 'js/md.js', 'js/store.js', 'js/config.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -37,10 +37,21 @@ self.addEventListener('push', e => {
     body: data.body || '', tag: data.tag, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: data.url || './' },
   }));
 });
+// Qual tarefa a notificação lembra: pelo endereço (#tarefa=…) ou pela etiqueta den-<id>.
+function taskIdOf(n) {
+  const m = /#tarefa=([^&]+)/.exec(n.data?.url || ''); if (m) return decodeURIComponent(m[1]);
+  const tag = n.tag || '';
+  return tag.startsWith('den-') && !['den-focus', 'den-test'].includes(tag) ? tag.slice(4) : null;
+}
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
-    for (const c of list) if ('focus' in c) return c.focus();
-    return self.clients.openWindow(e.notification.data?.url || './');
+  const id = taskIdOf(e.notification);
+  const url = id ? './#tarefa=' + encodeURIComponent(id) : (e.notification.data?.url || './');
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async list => {
+    for (const c of list) {
+      if (id) c.postMessage({ type: 'open-task', id });
+      if ('focus' in c) { try { return await c.focus(); } catch {} }
+    }
+    return self.clients.openWindow(url);
   }));
 });

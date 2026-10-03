@@ -877,3 +877,10 @@ body { background: var(--app-bg, var(--bg)); background-attachment: fixed; }
   body { --glass: var(--surface); --side-glass: var(--side-bg); }
   .glass, .menu-btn, .hpill, .head .seg, .tgroup, .tabbar, .col, .side, .col-tabs button, .cal-nav .icon-btn, .cal-nav .btn.ghost { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+/* notificação tocada: concluir ou adiar com um toque */
+.notif-act { display: flex; flex-direction: column; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--accent-soft); }
+.notif-act .btn.big { width: 100%; }
+.na-snooze { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.na-l { grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 800; color: var(--fg-2); }
+.na-snooze .quick-btn { padding: 0 6px; background: var(--surface); white-space: nowrap; }
