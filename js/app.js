@@ -64,21 +64,23 @@ function applyTextSize() {
   document.documentElement.style.webkitTextSizeAdjust = v; document.documentElement.style.textSizeAdjust = v;
 }
 applyTextSize();
-// Temas: auto (grafite, segue o aparelho), light (tudo claro), graphite (claro com barra grafite), dark, nord.
+// Temas: auto (grafite, segue o aparelho), light (tudo claro), graphite (claro com barra grafite), dark, nord, aurora (claro com brilhos).
 const THEMES = [
   { k: 'auto', name: 'Automático', desc: 'Grafite claro ou escuro, conforme o aparelho', side: '#2b2e31', bg: 'linear-gradient(135deg,#ffffff 50%,#1e2023 50%)', line: '#c9cbcf', acc: '#c93c30' },
   { k: 'light', name: 'Claro', desc: 'Tudo claro, inclusive a barra lateral', side: '#f4f4f5', bg: '#ffffff', line: '#e2e2e5', acc: '#c93c30', sideLine: '#c9cbcf' },
   { k: 'graphite', name: 'Claro com grafite', desc: 'O visual do computador: barra grafite e conteúdo claro', side: '#2b2e31', bg: '#ffffff', line: '#e2e2e5', acc: '#c93c30' },
   { k: 'dark', name: 'Escuro', desc: 'Sempre escuro', side: '#17191b', bg: '#1e2023', line: '#3a3d42', acc: '#ec6b5e' },
   { k: 'nord', name: 'Nord', desc: 'Azul-gelo da paleta Nord', side: '#242933', bg: '#2e3440', line: '#4c566a', acc: '#88c0d0' },
+  { k: 'aurora', name: 'Aurora', desc: 'Claro com vidro e brilhos suaves', side: 'linear-gradient(160deg,#f6d9d4,#eef0f7)', bg: 'radial-gradient(circle at 15% 10%,rgba(232,110,95,.35),transparent 55%),radial-gradient(circle at 100% 60%,rgba(110,140,235,.35),transparent 55%),#f1f1f4', line: 'rgba(31,33,36,.14)', acc: '#c93c30', sideLine: 'rgba(31,33,36,.16)' },
 ];
 function applyTheme() {
   const t = prefs.theme || 'auto';
   if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
-  const bar = { light: '#ffffff', graphite: '#ffffff', dark: '#1e2023', nord: '#2e3440' }[t];
+  const lite = isMobile() ? '#f4f4f6' : '#ffffff';
+  const bar = { light: lite, graphite: lite, dark: '#1e2023', nord: '#2e3440', aurora: '#f1f1f4' }[t];
   document.querySelectorAll('meta[name="theme-color"]').forEach((m, i) => {
     if (bar) { m.setAttribute('content', bar); m.removeAttribute('media'); }
-    else { m.setAttribute('media', i === 0 ? '(prefers-color-scheme: light)' : '(prefers-color-scheme: dark)'); m.setAttribute('content', i === 0 ? '#ffffff' : '#1e2023'); }
+    else { m.setAttribute('media', i === 0 ? '(prefers-color-scheme: light)' : '(prefers-color-scheme: dark)'); m.setAttribute('content', i === 0 ? lite : '#1e2023'); }
   });
 }
 applyTheme();
@@ -212,8 +214,9 @@ function renderSide() {
   h += navBtn({ type: 'notes' }, ic('notes'), 'Todas as notas', all('note').length);
   const tags = tagTree();
   if (tags.length) {
-    h += `<div class="side-label">Etiquetas</div>`;
+    h += `<div class="side-label">Etiquetas</div><div class="tags-list">`;
     for (const t of tags) h += navBtn({ type: 'tag', tag: t.t }, `<span class="ic hash" style="margin-left:${t.depth * 14}px">#</span>`, t.label, t.n);
+    h += `</div><div class="tags-chips">${tags.map(t => `<button class="tchip${S.view.type === 'tag' && S.view.tag === t.t ? ' on' : ''}" data-a="nav" data-type="tag" data-tag="${esc(t.t)}">#${esc(t.t)}${t.n ? `<em>${t.n}</em>` : ''}</button>`).join('')}</div>`;
   }
   $('#side-nav').innerHTML = h;
   $('#side-settings').classList.toggle('on', S.view.type === 'settings');
@@ -226,8 +229,8 @@ function renderSync() {
 }
 function renderTabbar() {
   const v = S.view.type;
-  const tab = (type, icon, label) => `<button class="tab${v === type ? ' on' : ''}" data-a="${type === 'more' ? 'side-open' : 'nav'}" data-type="${type}">${icon}<span>${label}</span></button>`;
-  $('#tabbar').innerHTML = tab('today', todayIcon(), 'Hoje') + tab('inbox', ic('inbox'), 'Entrada') + tab('notes', ic('notes'), 'Notas') + tab('search', ic('search'), 'Buscar') + tab('more', ic('menu'), 'Mais');
+  const tab = (type, icon, label) => `<button class="tab${v === type ? ' on' : ''}" data-a="nav" data-type="${type}"${v === type ? ' aria-current="page"' : ''}>${icon}<span>${label}</span></button>`;
+  $('#tabbar').innerHTML = tab('today', todayIcon(), 'Hoje') + tab('inbox', ic('inbox'), 'Entrada') + tab('notes', ic('notes'), 'Notas') + tab('search', ic('search'), 'Buscar');
   $('#fab').hidden = ['notes', 'tag', 'settings'].includes(v) && S.reading || v === 'settings';
 }
 
@@ -257,9 +260,17 @@ function taskRow(t, opts = {}) {
       </div>
     </div></div>`;
 }
-function headHtml(title, sub = '', actions = '') {
-  return `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}<span class="netslot">${netChip()}</span><span class="grow"></span>${actions}</header><div class="netbar-slot">${netBar()}</div>`;
+function headHtml(title, sub = '', actions = '', pill = '') {
+  return `<header class="head"><button class="icon-btn menu-btn" data-a="side-open" aria-label="Abrir menu">${I.menu}</button><h1${title.length > 9 ? ' class="long"' : ''}>${esc(title)}</h1>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}<span class="netslot">${netChip()}</span>${pill}<span class="grow"></span>${actions}</header><div class="netbar-slot">${netBar()}</div>`;
 }
+// Pílula do cabeçalho no celular: data e progresso do dia, ou quantas tarefas estão abertas.
+function todayPill(done, total) {
+  const d = new Date(); const date = `${WD[d.getDay()].slice(0, 3).toLowerCase()}, ${d.getDate()} ${MO[d.getMonth()]}`;
+  if (!total) return `<span class="hpill" aria-label="${esc(longDate(today()))}. Nada para hoje">${esc(date)}</span>`;
+  const off = (53.4 * (1 - done / total)).toFixed(1);
+  return `<span class="hpill" aria-label="${esc(longDate(today()))}. ${done} de ${total} tarefas feitas"><svg class="ring" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="8.5"/><circle class="bar" cx="11" cy="11" r="8.5" stroke-dasharray="53.4" stroke-dashoffset="${off}"/></svg><span>${esc(date)}</span><b>${done} de ${total}</b></span>`;
+}
+const countPill = n => `<span class="hpill"><b>${n}</b>${n === 1 ? 'aberta' : 'abertas'}</span>`;
 function netChip() {
   const m = { offline: ['off', 'Offline'], error: ['err', 'Sem sincronizar'], saving: ['busy', 'Salvando'] }[store.state.status];
   return m ? `<span class="net-chip ${m[0]}" role="status"><i></i>${m[1]}</span>` : '';
@@ -304,38 +315,39 @@ function renderTasks(main) {
   const actions = (L.project ? `<button class="icon-btn" data-a="edit-project" data-id="${esc(L.project.id)}" aria-label="Editar projeto">${I.dots}</button>` : '') + viewSwitch(mode) + rambleBtn();
   const td = today(); let body = '';
   const doneList = all('task').filter(t => t.done && L.doneFilter(t));
-  if (mode === 'board') return renderBoard(main, L, actions);
+  const tg = h => h ? `<div class="tgroup">${h}</div>` : '';
+  let pill = countPill(L.tasks.length);
+  if (S.view.type === 'today') { const doneToday = doneList.filter(t => (t.due && t.due <= td) || (t.deadline && t.deadline <= td)).length; pill = todayPill(doneToday, doneToday + L.tasks.length); }
+  if (mode === 'board') return renderBoard(main, L, actions, pill);
   if (S.view.type === 'today') {
     const overdue = L.tasks.filter(t => (t.due && t.due < td) || (!t.due && t.deadline < td) || (t.due > td && t.deadline <= td)).sort(PRIO_ORDER);
     const tod = L.tasks.filter(t => !overdue.includes(t)).sort((a, b) => (a.time || '99').localeCompare(b.time || '99') || PRIO_ORDER(a, b));
-    if (overdue.length) body += `<div class="section-h overdue">Atrasadas <span class="meta">${overdue.length}</span><span class="grow"></span><button class="link-btn" data-a="move-overdue">Mover para hoje</button></div>` + overdue.map(t => taskRow(t)).join('');
+    if (overdue.length) body += `<div class="section-h overdue">Atrasadas <span class="meta">${overdue.length}</span><span class="grow"></span><button class="link-btn" data-a="move-overdue">Mover para hoje</button></div>` + tg(overdue.map(t => taskRow(t)).join(''));
     if (overdue.length) body += `<div class="section-h">${esc(longDate(td))} <span class="meta">Hoje</span></div>`;
-    body += tod.map(t => taskRow(t, { hideDue: t.due === td })).join('');
-    body += addRow('today', L.preset);
+    body += tg(tod.map(t => taskRow(t, { hideDue: t.due === td })).join('') + addRow('today', L.preset));
     if (!L.tasks.length && S.composerKey !== 'today') body += emptyMsg('Nada para hoje', 'Aproveite, ou adicione algo com o botão +.');
   } else if (S.view.type === 'upcoming') {
     const overdue = L.tasks.filter(t => t.due < td).sort(PRIO_ORDER);
-    if (overdue.length) body += `<div class="section-h overdue">Atrasadas <span class="meta">${overdue.length}</span></div>` + overdue.map(t => taskRow(t)).join('');
+    if (overdue.length) body += `<div class="section-h overdue">Atrasadas <span class="meta">${overdue.length}</span></div>` + tg(overdue.map(t => taskRow(t)).join(''));
     for (let k = 0; k < 7; k++) {
       const d = addDays(td, k); const list = L.tasks.filter(t => t.due === d).sort((a, b) => (a.time || '99').localeCompare(b.time || '99') || PRIO_ORDER(a, b));
       const rel = k === 0 ? 'Hoje · ' : k === 1 ? 'Amanhã · ' : '';
-      body += `<div class="section-h">${esc(shortDate(d))} <span class="meta">${rel}${WD[pd(d).getDay()]}</span></div>`;
-      body += list.map(t => taskRow(t, { hideDue: true })).join('') + addRow('up' + d, { due: d });
+      body += `<div class="section-h${list.length ? '' : ' empty-day'}">${esc(shortDate(d))} <span class="meta">${rel}${WD[pd(d).getDay()]}</span></div>`;
+      body += tg(list.map(t => taskRow(t, { hideDue: true })).join('') + addRow('up' + d, { due: d }));
     }
     const later = L.tasks.filter(t => t.due > addDays(td, 6)).sort((a, b) => a.due.localeCompare(b.due) || PRIO_ORDER(a, b));
-    if (later.length) body += `<div class="section-h">Depois</div>` + later.map(t => taskRow(t)).join('');
+    if (later.length) body += `<div class="section-h">Depois</div>` + tg(later.map(t => taskRow(t)).join(''));
   } else {
     const list = L.tasks.sort(PRIO_ORDER);
-    body += list.map(t => taskRow(t, { hideProject: true })).join('');
-    body += addRow(viewKey(), L.preset);
+    body += tg(list.map(t => taskRow(t, { hideProject: true })).join('') + addRow(viewKey(), L.preset));
     if (!list.length && S.composerKey !== viewKey()) body += emptyMsg(L.project ? 'Nenhuma tarefa aberta neste projeto' : 'Sua Entrada está vazia', 'Tarefas sem projeto ficam aqui.');
   }
   if (doneList.length) {
     body += `<button class="link-btn done-toggle" data-a="show-done">${S.showDone ? 'Ocultar' : 'Mostrar'} concluídas (${doneList.length})</button>`;
-    if (S.showDone) body += doneList.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 50).map(t => taskRow(t)).join('');
+    if (S.showDone) body += tg(doneList.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 50).map(t => taskRow(t)).join(''));
   }
   const hint = touchOnly && L.tasks.length && !LS.get('den:hint-gestures') ? `<div class="coach" role="note"><b>Dicas rápidas</b><ul><li>Deslize uma tarefa para a <b>direita</b> para concluir, ou para a <b>esquerda</b> para reagendar.</li><li><b>Segure</b> uma tarefa ou cartão para mover.</li><li><b>Segure o botão +</b> para falar várias tarefas de uma vez.</li></ul><button class="btn" data-a="hint-ok">Entendi</button></div>` : '';
-  paint(main, headHtml(L.title, L.sub, actions) + `<div class="scroll" data-scroll="tasks"><div class="task-col">${hint}${body}</div></div>`);
+  paint(main, headHtml(L.title, L.sub, actions, pill) + `<div class="scroll" data-scroll="tasks"><div class="task-col">${hint}${body}</div></div>`);
 }
 
 function paint(main, html) {
@@ -349,7 +361,7 @@ function paint(main, html) {
 }
 
 /* ---------- quadro (kanban) ---------- */
-function renderBoard(main, L, actions) {
+function renderBoard(main, L, actions, pill = '') {
   const recentDone = all('task').filter(t => t.done && L.doneFilter(t)).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 30);
   const cols = STATUSES.map(([k, label, color]) => {
     const list = k === 'done' ? recentDone : L.tasks.filter(t => (t.status || 'todo') === k).sort(PRIO_ORDER);
@@ -363,7 +375,7 @@ function renderBoard(main, L, actions) {
   }).join('');
   const counts = STATUSES.map(([k]) => k === 'done' ? recentDone.length : L.tasks.filter(t => (t.status || 'todo') === k).length);
   const tabs = `<div class="col-tabs" role="tablist" aria-label="Colunas">${STATUSES.map(([k, label], i) => `<button role="tab" data-a="col-jump" data-i="${i}" class="${i === (S.boardCol || 0) ? 'on' : ''}">${label}<em>${counts[i]}</em></button>`).join('')}</div>`;
-  paint(main, headHtml(L.title, L.sub, actions) + tabs + `<div class="scroll board" data-scroll="board">${cols}</div>`);
+  paint(main, headHtml(L.title, L.sub, actions, pill) + tabs + `<div class="scroll board" data-scroll="board">${cols}</div>`);
   const board = $('.board', main);
   board.addEventListener('scroll', () => {
     const w = board.firstElementChild?.getBoundingClientRect().width || 1;
@@ -391,7 +403,7 @@ function renderCalendar(main) {
   const wd = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
   const agendaHtml = () => {
     const list = byDay[S.calSel] || [];
-    return `<div class="agenda"><div class="section-h">${esc(longDate(S.calSel))} <span class="meta">${dueInfo(S.calSel).label}</span></div>${list.map(x => taskRow(x.t, { hideDue: x.kind === 'due' && !x.t.time })).join('')}${list.length ? '' : '<p class="muted small" style="margin:10px 0 0">Nada marcado para este dia.</p>'}${addRow('cal' + S.calSel, { due: S.calSel })}</div>`;
+    return `<div class="agenda"><div class="section-h">${esc(longDate(S.calSel))} <span class="meta">${dueInfo(S.calSel).label}</span></div><div class="tgroup">${list.map(x => taskRow(x.t, { hideDue: x.kind === 'due' && !x.t.time })).join('')}${addRow('cal' + S.calSel, { due: S.calSel })}</div>${list.length ? '' : '<p class="muted small cal-none">Nada marcado para este dia.</p>'}</div>`;
   };
   let title, body;
   if (mode === 'week') {
@@ -445,14 +457,14 @@ const QUADS = [
 ];
 function renderMatrix(main) {
   const tasks = openTasks();
-  const quads = QUADS.map(([k, name, hint, imp, urg]) => {
+  const quads = QUADS.map(([k, name, hint, imp, urg], qi) => {
     const list = tasks.filter(t => isImportant(t) === imp && !!isUrgent(t) === urg).sort(PRIO_ORDER);
     return `<section class="quad q-${k}" data-drop="quad" data-quad="${k}">
-      <div class="quad-h"><h2>${name}</h2><span class="meta">${hint}</span><span class="grow"></span><span class="count">${list.length}</span>
+      <div class="quad-h"><span class="qnum" aria-hidden="true">${qi + 1}</span><h2>${name}</h2><span class="meta">${hint}</span><span class="grow"></span><span class="count">${list.length}</span>
       <button class="icon-btn sm" data-a="quad-add" data-quad="${k}" aria-label="Adicionar em ${name}">${I.plus}</button></div>
       <div class="quad-list">${list.map(t => taskRow(t, { compact: true, drag: true })).join('') || '<p class="muted small">Nada aqui.</p>'}</div></section>`;
   }).join('');
-  paint(main, headHtml('Prioridades', 'Todas as tarefas abertas', viewSwitch('matrix') + rambleBtn()) +
+  paint(main, headHtml('Prioridades', 'Todas as tarefas abertas', viewSwitch('matrix') + rambleBtn(), countPill(tasks.length)) +
     `<p class="matrix-help">Importante = prioridade P1 ou P2. Urgente = data ou prazo nos próximos 2 dias.${touchOnly ? '' : ' Arraste uma tarefa para outro quadro e o Den ajusta a prioridade e a data.'}</p>
     <div class="scroll matrix" data-scroll="matrix"><span class="axis ax-top a1">Urgente</span><span class="axis ax-top a2">Não urgente</span><span class="axis ax-side s1">Importante</span><span class="axis ax-side s2">Não importante</span>${quads}</div>`);
 }
@@ -1174,7 +1186,6 @@ document.addEventListener('click', e => {
   if (a === 'close-overlay') { if (e.target !== el && el.classList.contains('scrim')) return; closeOverlay(); return; }
   switch (a) {
     case 'nav': {
-      if (el.dataset.type === 'more') break;
       const v = { type: el.dataset.type }; if (el.dataset.id) v.id = el.dataset.id; if (el.dataset.tag) v.tag = el.dataset.tag;
       go(v); break;
     }
